@@ -64,7 +64,8 @@ def discover():
             'tap_stream_id': schema_name,
             'schema': schema,
             'metadata': singer.metadata.to_list(metadata),
-            'key_properties': [],
+            'key_properties': ['transaction_id'],
+            'bookmark_properties': ['transaction_updated_date']
         }
         streams.append(catalog_entry)
 
@@ -145,8 +146,8 @@ def request(client, start_date, end_date, fields='all'):
 
     LOGGER.info(
         'Retrieving transactions between %s and %s.',
-        start_date,
-        end_date)
+        start_date.strftime('%Y-%m-%d'),
+        end_date.strftime('%Y-%m-%d'))
     while True:
         response = client.request(url, params=params)
         try:
@@ -170,11 +171,16 @@ def request(client, start_date, end_date, fields='all'):
         except StopIteration:
             break
 
-def get_transactions(client, start_date, end_date, fields='all'):
+def get_transactions(client, start_date=None, end_date=None, fields='all'):
     '''
     Divides the date range into segments no longer than MAX_DAYS_BETWEEN
     and iterates through them to request transaction chunks and process them.
     '''
+
+    if start_date is None:
+        start_date = datetime(2016, 7, 1) # PayPal's oldest data is July 2016
+    if end_date is None:
+        end_date = datetime.utcnow()
 
     chunksize = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + chunksize < end_date:
@@ -230,8 +236,9 @@ def sync(config, state, catalog):
 
     get_transactions(
         client=client,
-        start_date=datetime(2018, 7, 15),
-        end_date=datetime(2018, 7, 16))
+        start_date=None,
+        end_date=None,
+        fields=selected_stream_names)
 
 @utils.handle_top_exception(LOGGER)
 def main():
