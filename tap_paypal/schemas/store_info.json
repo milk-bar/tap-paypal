@@ -1,0 +1,15 @@
+{
+  "type": ["null", "object"],
+  "additionalProperties": false,
+  "properties": {
+    "transaction_id": {
+      "type": ["null", "string"]
+    },
+    "store_id": {
+      "type": ["null", "string"]
+    },
+    "terminal_id": {
+      "type": ["null", "string"]
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "type": ["null", "object"],
+  "additionalProperties": false,
+  "definitions": {
+    "money": {
+      "type": ["null", "object"],
+      "properties": {
+        "currency_code": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": ["currency_code", "value"]
+    }
+  },
+  "properties": {
+    "transaction_id": {
+      "type": ["null", "string"]
+    },
+    "item_details": {
+      "type": ["null", "array"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "item_code": {
+            "type": ["null", "string"]
+          },
+          "item_name": {
+            "type": ["null", "string"]
+          },
+          "item_description": {
+            "type": ["null", "string"]
+          },
+          "item_options": {
+            "type": ["null", "string"]
+          },
+          "item_quantity": {
+            "type": ["null", "string"]
+          },
+          "item_unit_price": {
+            "$ref": "#/definitions/money"
+          },
+          "item_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "discount_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "adjustment_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "gift_wrap_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "tax_percentage": {
+            "type": ["null", "string"]
+          },
+          "tax_amounts": {
+            "$ref": "#/definitions/money"
+          },
+          "basic_shipping_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "extra_shipping_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "handling_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "insurance_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "total_item_amount": {
+            "$ref": "#/definitions/money"
+          },
+          "invoice_number": {
+            "type": ["null", "string"]
+          },
+          "checkout_options": {
+            "type": ["null", "array"],
+            "items": {
+              "type": "object",
+              "properties": {
+                "checkout_option_name": {
+                  "type": ["null", "string"]
+                },
+                "checkout_option_value": {
+                  "type": ["null", "string"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tax_inclusive": {
+      "type": ["null", "boolean"]
+    },
+    "paypal_invoice_id": {
+      "type": ["null", "string"]
+    }
+  }
+}

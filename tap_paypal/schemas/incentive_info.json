@@ -1,0 +1,38 @@
+{
+  "type": ["null", "object"],
+  "additionalProperties": false,
+  "properties": {
+    "transaction_id": {
+      "type": ["null", "string"]
+    },
+    "incentive_details": {
+      "type": ["null", "array"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "incentive_type": {
+            "type": ["null", "string"]
+          },
+          "incentive_code": {
+            "type": ["null", "string"]
+          },
+          "incentive_amount": {
+            "type": ["null", "object"],
+            "properties": {
+              "currency_code": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": ["currency_code", "value"]
+          },
+          "incentive_program_code": {
+            "type": ["null", "string"]
+          }
+        }
+      }
+    }
+  }
+}

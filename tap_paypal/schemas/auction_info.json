@@ -1,0 +1,22 @@
+{
+  "type": ["null", "object"],
+  "additionalProperties": false,
+  "properties": {
+    "transaction_id": {
+      "type": ["null", "string"]
+    },
+    "auction_site": {
+      "type": ["null", "string"]
+    },
+    "auction_item_site": {
+      "type": ["null", "boolean"]
+    },
+    "auction_buyer_id": {
+      "type": ["null", "string"]
+    },
+    "auction_closing_date": {
+      "type": ["null", "string"],
+      "format": "date-time"
+    }
+  }
+}
