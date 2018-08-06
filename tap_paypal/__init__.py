@@ -3,11 +3,12 @@ import os
 import json
 import urllib.parse
 from datetime import datetime, timedelta
+import dateutil.parser
 import requests
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
 import singer
-import singer.metrics as metrics
+from singer import metrics
 from singer import utils
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
@@ -131,12 +132,13 @@ class Stream():
     '''
     buffer_limit = 100
 
-    def __init__(self, stream):
+    def __init__(self, stream, bookmark):
         self.stream_name = stream.tap_stream_id
         self.schema = stream.schema.to_dict()
         self.key_properties = stream.key_properties
         self.counter = metrics.record_counter(self.stream_name)
         self.buffer = []
+        self.bookmark = dateutil.parser.parse(bookmark)
 
     def add_to_buffer(self, record):
         self.buffer.append(record)
@@ -154,17 +156,21 @@ class Stream():
             self.schema,
             self.key_properties)
 
-def format_date_string(dt):
-    dt = dt.astimezone()
-    dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    date_str = dt.isoformat('T')
-    return date_str
+def truncate_date(timestamp):
+    '''Truncates a datetime object to only its date components.'''
+    return timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
 
 def request(client, start_date, end_date, fields='all'):
+    '''
+    Makes a request to the API, retrieving transactions in chunks of 100 and
+    yielding a generator of those 100-record chunks. Handles any pagination
+    automatically using the `next` field returned in the response.
+    '''
+    
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
-        'start_date': format_date_string(start_date),
-        'end_date': format_date_string(end_date),
+        'start_date': start_date.astimezone().isoformat('T'),
+        'end_date': truncate_date(end_date.astimezone()).isoformat('T'),
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
@@ -187,7 +193,7 @@ def request(client, start_date, end_date, fields='all'):
         except StopIteration:
             break
 
-def get_transactions(client, start_date=None, end_date=None, fields='all'):
+def get_transactions(client, state, start_date=None, end_date=None, fields='all'):
     '''
     Divides the date range into segments no longer than MAX_DAYS_BETWEEN
     and iterates through them to request transaction chunks and process them.
@@ -202,32 +208,35 @@ def get_transactions(client, start_date=None, end_date=None, fields='all'):
     while start_date + chunksize < end_date:
         chunk_end_date = start_date + chunksize
         for chunk in request(client, start_date, chunk_end_date, fields):
-            process_chunk(chunk)
+            process_chunk(chunk, state)
         start_date = chunk_end_date + timedelta(days=1)
     for chunk in request(client, start_date, end_date, fields):
-        process_chunk(chunk)
+        process_chunk(chunk, state)
 
     empty_all_buffers()
 
-def process_chunk(chunk):
+def write_to_stream(stream, record, state, updated_at):
+    buffer_is_full = stream.add_to_buffer(record)
+    if buffer_is_full:
+        for buf_record in stream.empty_buffer():
+            transformed = singer.transform(buf_record, stream.schema)
+            singer.write_record(stream.stream_name, transformed)
+
+def process_chunk(chunk, state):
     '''
-    Sorts transaction data into the appropriate stream buffers, flushing the
+    Sorts transaction data into the appropriate stream buffers, emptying the
     buffers whenever they become full.
     '''
+
     for transaction in chunk:
+        updated_date = transaction['transaction_info']['transaction_updated_date']
+        updated_date = dateutil.parser.parse(updated_date)
         id_ = transaction['transaction_info']['transaction_id']
         for stream_name, record in transaction.items():
             stream = STREAMS[stream_name]
-            if record:
-                # Save ID to all streams so we have a common key
+            if updated_date >= stream.bookmark and record:
                 record['transaction_id'] = id_
-                buffer_is_full = stream.add_to_buffer(record)
-                if buffer_is_full:
-                    for buf_record in stream.empty_buffer():
-                        transformed = singer.transform(buf_record, stream.schema)
-                        singer.write_record(stream.stream_name, transformed)
-            else:
-                continue
+                write_to_stream(stream, record, state, updated_date)
 
 def empty_all_buffers():
     for stream in STREAMS.values():
@@ -236,7 +245,7 @@ def empty_all_buffers():
             singer.write_record(stream.stream_name, transformed)
     for stream in STREAMS.values():
         LOGGER.info(
-            "Completed sync of %s total records to stream '%s'.",
+            "Completed sync of %s records to stream '%s'.",
             stream.counter.value,
             stream.stream_name)
 
@@ -246,14 +255,18 @@ def sync(config, state, catalog):
     for catalog_stream in catalog.streams:
         stream_name = catalog_stream.tap_stream_id
         if stream_name in selected_stream_names:
-            stream = Stream(catalog_stream)
+            bookmark = singer.get_bookmark(
+                state=state,
+                tap_stream_id=stream_name,
+                key='transaction_updated_date')
+            stream = Stream(catalog_stream, bookmark)
             stream.write_schema()
             STREAMS[stream_name] = stream
 
     get_transactions(
         client=client,
-        start_date=datetime(2018, 8, 4),
-        end_date=None,
+        state=state,
+        start_date=datetime(2018, 6, 1),
         fields=selected_stream_names)
 
 @utils.handle_top_exception(LOGGER)
