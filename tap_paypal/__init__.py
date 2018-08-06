@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import os
 import json
-import requests
 import urllib.parse
+from datetime import datetime, timedelta
+import requests
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
-from datetime import datetime, timedelta
 import singer
 from singer import utils
 
@@ -17,10 +17,8 @@ ENDPOINTS = {
     'transactions': 'v1/reporting/transactions',
     'token': 'v1/oauth2/token'}
 
-
 def get_abs_path(path):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
-
 
 # Load schemas from schemas folder
 def load_schemas():
@@ -33,7 +31,6 @@ def load_schemas():
             schemas[file_raw] = json.load(file)
 
     return schemas
-
 
 def discover():
     raw_schemas = load_schemas()
@@ -65,10 +62,8 @@ def discover():
 
     return {'streams': streams}
 
-
 def stream_is_selected(metadata):
     return metadata.get((), {}).get('selected', False)
-
 
 def get_selected_streams(catalog):
     selected_stream_names = []
@@ -78,8 +73,7 @@ def get_selected_streams(catalog):
             selected_stream_names.append(stream.tap_stream_id)
     return selected_stream_names
 
-
-class PayPalClient(object):
+class PayPalClient():
     # TODO: Store access token in config.json and only
     # request a new token if expired
     def __init__(self, config):
@@ -103,7 +97,6 @@ class PayPalClient(object):
             self.get_access_token()
             return self.session.get(url, params=params)
 
-
 # TODO: Adding exponential backoff, handling for 429s here
 def request(client, start_date, end_date, fields='all'):
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
@@ -112,28 +105,27 @@ def request(client, start_date, end_date, fields='all'):
         'end_date': end_date.astimezone().isoformat('T'),
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
-    LOGGER.info('Retrieving transactions between {} and {}.' \
-        .format(start_date, end_date))
+    LOGGER.info(
+        'Retrieving transactions between %(start_date)s and %(end_date)s.',
+        extra={'start_date': start_date, 'end_date': end_date})
     while True:
-        r = client.request(url, params=params)
+        response = client.request(url, params=params)
         try:
-            r.raise_for_status()
-        except requests.HTTPError as e:
-            message = r.json()['details']
-            raise e(message)
-            # TODO: Errors need to be logged here
+            response.raise_for_status()
+        except requests.HTTPError:
+            LOGGER.critical(response.json()['details'])
+            raise
         else:
-            response = r.json()
-        for transaction in response['transaction_details']:
+            response_json = response.json()
+        for transaction in response_json['transaction_details']:
             yield transaction
         try:
             url = next(
-                link['href'] for link in response['links']
+                link['href'] for link in response_json['links']
                 if link['rel'] == 'next')
             params = {}
         except StopIteration:
             break
-
 
 def get_transactions(client, start_date, end_date, fields='all'):
     chunksize = timedelta(days=MAX_DAYS_BETWEEN)
@@ -148,7 +140,6 @@ def get_transactions(client, start_date, end_date, fields='all'):
         for transaction in chunk:
             yield transaction
 
-
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
@@ -157,7 +148,6 @@ def sync(config, state, catalog):
     for stream in catalog.streams:
         stream_name = stream.tap_stream_id
         if stream_name in selected_stream_names:
-            LOGGER.info('Syncing stream:' + stream_name)
             singer.write_schema(
                 stream.tap_stream_id,
                 stream.schema.to_dict(),
@@ -174,7 +164,6 @@ def sync(config, state, catalog):
                 singer.write_record('transactions', record)
 
             # TODO: Need to store final spot to state
-
 
 @utils.handle_top_exception(LOGGER)
 def main():
@@ -194,7 +183,6 @@ def main():
         elif args.catalog:
             catalog = args.catalog
             sync(args.config, args.state, catalog)
-
 
 if __name__ == "__main__":
     main()
