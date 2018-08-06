@@ -74,8 +74,6 @@ def get_selected_streams(catalog):
     return selected_stream_names
 
 class PayPalClient():
-    # TODO: Store access token in config.json and only
-    # request a new token if expired
     def __init__(self, config):
         self.config = config
         oath_client = BackendApplicationClient(
@@ -97,7 +95,6 @@ class PayPalClient():
             self.get_access_token()
             return self.session.get(url, params=params)
 
-# TODO: Adding exponential backoff, handling for 429s here
 def request(client, start_date, end_date, fields='all'):
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
@@ -107,7 +104,7 @@ def request(client, start_date, end_date, fields='all'):
 
     LOGGER.info(
         'Retrieving transactions between %(start_date)s and %(end_date)s.',
-        extra={'start_date': start_date, 'end_date': end_date})
+        {'start_date': start_date, 'end_date': end_date})
     while True:
         response = client.request(url, params=params)
         try:
@@ -135,35 +132,45 @@ def get_transactions(client, start_date, end_date, fields='all'):
         for transaction in chunk:
             yield transaction
         start_date = chunk_end_date + timedelta(days=1)
-    else:
-        chunk = request(client, start_date, end_date, fields)
-        for transaction in chunk:
-            yield transaction
+    chunk = request(client, start_date, end_date, fields)
+    for transaction in chunk:
+        yield transaction
+
+def add_to_buffer(transaction, buffer):
+    id_ = transaction['transaction_info']['transaction_id']
+    for stream, data in transaction.items():
+        if data:
+            buffer[stream].append(data)
+            buffer[stream][-1]['transaction_id'] = id_
+        else:
+            continue
+    return buffer
 
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
 
-    # Loop over streams in catalog
+    transactions = get_transactions(
+        client=client,
+        start_date=datetime(2018, 6, 15),
+        end_date=datetime(2018, 6, 16))
+    transaction = next(transactions)
+    buffer = {stream: [] for stream in transaction.keys()}
+    buffer = add_to_buffer(transaction, buffer)
+    for transaction in transactions:
+        buffer = add_to_buffer(transaction, buffer)
+
     for stream in catalog.streams:
         stream_name = stream.tap_stream_id
-        if stream_name in selected_stream_names:
+        if stream_name in selected_stream_names and buffer[stream_name]:
+            schema = stream.schema.to_dict()
             singer.write_schema(
-                stream.tap_stream_id,
-                stream.schema.to_dict(),
+                stream_name,
+                schema,
                 stream.key_properties)
-            # TODO: Need to make these dates dynamic based on state file
-            transactions = get_transactions(
-                client=client,
-                start_date=datetime(2018, 6, 15),
-                end_date=datetime(2018, 8, 1))
-            for transaction in transactions:
-                record = singer.transform(
-                    transaction[stream.tap_stream_id],
-                    stream.schema.to_dict())
-                singer.write_record(stream.tap_stream_id, record)
-
-            # TODO: Need to store final spot to state
+            for record in buffer[stream_name]:
+                record = singer.transform(record, schema)
+                singer.write_record(stream_name, record)
 
 @utils.handle_top_exception(LOGGER)
 def main():
