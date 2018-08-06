@@ -7,6 +7,7 @@ import requests
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
 import singer
+import singer.metrics as metrics
 from singer import utils
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
@@ -103,8 +104,9 @@ def request(client, start_date, end_date, fields='all'):
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
-        'Retrieving transactions between %(start_date)s and %(end_date)s.',
-        {'start_date': start_date, 'end_date': end_date})
+        'Retrieving transactions between %s and %s.',
+        start_date,
+        end_date)
     while True:
         response = client.request(url, params=params)
         try:
@@ -114,6 +116,10 @@ def request(client, start_date, end_date, fields='all'):
             raise
         else:
             response_json = response.json()
+            LOGGER.info(
+                'Completed retrieving all transactions on page %s of %s.',
+                response_json['page'],
+                response_json['total_pages'])
         for transaction in response_json['transaction_details']:
             yield transaction
         try:
@@ -146,14 +152,28 @@ def add_to_buffer(transaction, buffer):
             continue
     return buffer
 
+def sync_stream(stream, records):
+    stream_name = stream.tap_stream_id
+    with metrics.record_counter(stream_name) as counter:
+        schema = stream.schema.to_dict()
+        singer.write_schema(
+            stream_name,
+            schema,
+            stream.key_properties)
+        for record in records:
+            record = singer.transform(record, schema)
+            singer.write_record(stream_name, record)
+            counter.increment()
+        return counter.value
+
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
 
     transactions = get_transactions(
         client=client,
-        start_date=datetime(2018, 6, 15),
-        end_date=datetime(2018, 6, 16))
+        start_date=datetime(2018, 7, 15),
+        end_date=datetime(2018, 7, 16))
     transaction = next(transactions)
     buffer = {stream: [] for stream in transaction.keys()}
     buffer = add_to_buffer(transaction, buffer)
@@ -163,14 +183,12 @@ def sync(config, state, catalog):
     for stream in catalog.streams:
         stream_name = stream.tap_stream_id
         if stream_name in selected_stream_names and buffer[stream_name]:
-            schema = stream.schema.to_dict()
-            singer.write_schema(
-                stream_name,
-                schema,
-                stream.key_properties)
-            for record in buffer[stream_name]:
-                record = singer.transform(record, schema)
-                singer.write_record(stream_name, record)
+            LOGGER.info("Starting sync on stream '%s'.", stream_name)
+            counter_value = sync_stream(stream, buffer[stream_name])
+            LOGGER.info(
+                "Completed syncing %s rows to stream '%s'.",
+                counter_value,
+                stream_name)
 
 @utils.handle_top_exception(LOGGER)
 def main():
