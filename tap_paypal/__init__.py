@@ -82,6 +82,13 @@ def get_selected_streams(catalog):
             selected_stream_names.append(stream.tap_stream_id)
     return selected_stream_names
 
+def strip_query_string(url):
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+    parsed = parsed._replace(query='')
+    url = parsed.geturl()
+    return url, params
+
 class PayPalClient():
     def __init__(self, config):
         self.config = config
@@ -98,12 +105,24 @@ class PayPalClient():
             client_secret=self.config['client_secret'])
 
     def request(self, url, params):
+        url, addl_params = strip_query_string(url)
+        params.update(addl_params)
         LOGGER.info("Making a request to '%s' using params: %s", url, params)
         try:
-            return self.session.get(url, params=params)
+            response = self.session.get(url, params=params)
         except TokenExpiredError:
             self.get_access_token()
-            return self.session.get(url, params=params)
+            response = self.session.get(url, params=params)
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            LOGGER.critical(
+                "Request returned code %s with the following details: %s",
+                response.status_code,
+                response.json()['details'])
+            raise
+        else:
+            return response.json()
 
 class Stream():
     '''
@@ -150,17 +169,11 @@ def request(client, start_date, end_date, fields='all'):
         end_date.strftime('%Y-%m-%d'))
     while True:
         response = client.request(url, params=params)
-        try:
-            response.raise_for_status()
-        except requests.HTTPError:
-            LOGGER.critical(response.json()['details'])
-            raise
-        else:
-            response_json = response.json()
-            LOGGER.info(
-                'Completed retrieving all transactions on page %s of %s.',
-                response_json['page'],
-                response_json['total_pages'])
+        response_json = response.json()
+        LOGGER.info(
+            'Completed retrieving all transactions on page %s of %s.',
+            response_json['page'],
+            response_json['total_pages'])
         chunk = response_json['transaction_details']
         yield chunk
         try:
@@ -236,7 +249,7 @@ def sync(config, state, catalog):
 
     get_transactions(
         client=client,
-        start_date=None,
+        start_date=datetime(2018, 8, 4),
         end_date=None,
         fields=selected_stream_names)
 
