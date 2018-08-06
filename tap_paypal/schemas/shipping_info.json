@@ -28,6 +28,9 @@
     }
   },
   "properties": {
+    "transaction_id": {
+      "type": ["null", "string"]
+    },
     "name": {
       "type": ["null", "string"]
     },
