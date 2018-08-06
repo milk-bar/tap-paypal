@@ -159,9 +159,9 @@ def sync(config, state, catalog):
                 end_date=datetime(2018, 8, 1))
             for transaction in transactions:
                 record = singer.transform(
-                    transaction['transaction_info'],
+                    transaction[stream.tap_stream_id],
                     stream.schema.to_dict())
-                singer.write_record('transactions', record)
+                singer.write_record(stream.tap_stream_id, record)
 
             # TODO: Need to store final spot to state
 
