@@ -115,12 +115,10 @@ class PayPalClient():
             response = self.session.get(url, params=params)
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError:
-            LOGGER.critical(
-                "Request returned code %s with the following details: %s",
-                response.status_code,
-                response.json()['details'])
-            raise
+        except requests.exceptions.HTTPError as error:
+            message = "Request returned code {} with the following details: {}" \
+                .format(response.status_code, response.json()['details'])
+            raise type(error)(message) from error
         else:
             return response.json()
 
@@ -156,11 +154,17 @@ class Stream():
             self.schema,
             self.key_properties)
 
+def format_date_string(dt):
+    dt = dt.astimezone()
+    dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    date_str = dt.isoformat('T')
+    return date_str
+
 def request(client, start_date, end_date, fields='all'):
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
-        'start_date': start_date.astimezone().isoformat('T'),
-        'end_date': end_date.astimezone().isoformat('T'),
+        'start_date': format_date_string(start_date),
+        'end_date': format_date_string(end_date),
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
@@ -169,16 +173,15 @@ def request(client, start_date, end_date, fields='all'):
         end_date.strftime('%Y-%m-%d'))
     while True:
         response = client.request(url, params=params)
-        response_json = response.json()
         LOGGER.info(
             'Completed retrieving all transactions on page %s of %s.',
-            response_json['page'],
-            response_json['total_pages'])
-        chunk = response_json['transaction_details']
+            response['page'],
+            response['total_pages'])
+        chunk = response['transaction_details']
         yield chunk
         try:
             url = next(
-                link['href'] for link in response_json['links']
+                link['href'] for link in response['links']
                 if link['rel'] == 'next')
             params = {}
         except StopIteration:
@@ -193,7 +196,7 @@ def get_transactions(client, start_date=None, end_date=None, fields='all'):
     if start_date is None:
         start_date = datetime(2016, 7, 1) # PayPal's oldest data is July 2016
     if end_date is None:
-        end_date = datetime.utcnow()
+        end_date = datetime.utcnow() - timedelta(days=1)
 
     chunksize = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + chunksize < end_date:
