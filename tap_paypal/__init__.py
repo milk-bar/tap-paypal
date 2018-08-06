@@ -41,7 +41,7 @@ def load_schema(schema_name):
     return schema
 
 def discover():
-    raw_schemas = load_schemas()
+    raw_schemas = load_all_schemas()
     streams = []
 
     for schema_name, schema in raw_schemas.items():
@@ -97,6 +97,7 @@ class PayPalClient():
             client_secret=self.config['client_secret'])
 
     def request(self, url, params):
+        LOGGER.info("Making a request to '%s' using params: %s", url, params)
         try:
             return self.session.get(url, params=params)
         except TokenExpiredError:
@@ -192,9 +193,12 @@ def process_chunk(chunk):
     buffers whenever they become full.
     '''
     for transaction in chunk:
+        id_ = transaction['transaction_info']['transaction_id']
         for stream_name, record in transaction.items():
             stream = STREAMS[stream_name]
             if record:
+                # Save ID to all streams so we have a common key
+                record['transaction_id'] = id_
                 buffer_is_full = stream.add_to_buffer(record)
                 if buffer_is_full:
                     for buf_record in stream.empty_buffer():
@@ -214,20 +218,6 @@ def empty_all_buffers():
             stream.counter.value,
             stream.stream_name)
 
-# def sync_stream(stream, records):
-#     stream_name = stream.tap_stream_id
-#     with metrics.record_counter(stream_name) as counter:
-#         schema = stream.schema.to_dict()
-#         singer.write_schema(
-#             stream_name,
-#             schema,
-#             stream.key_properties)
-#         for record in records:
-#             record = singer.transform(record, schema)
-#             singer.write_record(stream_name, record)
-#             counter.increment()
-#         return counter.value
-
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
@@ -240,18 +230,8 @@ def sync(config, state, catalog):
 
     get_transactions(
         client=client,
-        start_date=datetime(2018, 6, 15),
-        end_date=datetime(2018, 7, 5))
-
-    # for stream in catalog.streams:
-    #     stream_name = stream.tap_stream_id
-    #     if stream_name in selected_stream_names and buffer[stream_name]:
-    #         LOGGER.info("Starting sync on stream '%s'.", stream_name)
-    #         counter_value = sync_stream(stream, buffer[stream_name])
-    #         LOGGER.info(
-    #             "Completed syncing %s rows to stream '%s'.",
-    #             counter_value,
-    #             stream_name)
+        start_date=datetime(2018, 7, 15),
+        end_date=datetime(2018, 7, 16))
 
 @utils.handle_top_exception(LOGGER)
 def main():
