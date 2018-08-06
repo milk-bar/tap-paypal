@@ -17,21 +17,28 @@ BASE_URL = 'https://api.paypal.com'
 ENDPOINTS = {
     'transactions': 'v1/reporting/transactions',
     'token': 'v1/oauth2/token'}
+STREAMS = {}
 
 def get_abs_path(path):
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
 
-# Load schemas from schemas folder
-def load_schemas():
-    schemas = {}
+def load_json(path):
+    with open(path, 'r') as file:
+        json_ = json.load(file)
+    return json_
 
+def load_all_schemas():
+    schemas = {}
     for filename in os.listdir(get_abs_path('schemas')):
         path = get_abs_path('schemas') + '/' + filename
         file_raw = filename.replace('.json', '')
-        with open(path) as file:
-            schemas[file_raw] = json.load(file)
-
+        schemas[file_raw] = load_json(path)
     return schemas
+
+def load_schema(schema_name):
+    path = os.path.join(get_abs_path('schemas'), schema_name + '.json')
+    schema = load_json(path)
+    return schema
 
 def discover():
     raw_schemas = load_schemas()
@@ -96,6 +103,38 @@ class PayPalClient():
             self.get_access_token()
             return self.session.get(url, params=params)
 
+class Stream():
+    '''
+    Stores schema data and a buffer of records for a particular stream.
+    When a Stream's buffer reaches its `buffer_size`, it returns a
+    boolean that the buffer should be emptied. Emptying the buffer resets the
+    buffer and returns a generator object with all records in the buffer.
+    '''
+    buffer_limit = 100
+
+    def __init__(self, stream):
+        self.stream_name = stream.tap_stream_id
+        self.schema = stream.schema.to_dict()
+        self.key_properties = stream.key_properties
+        self.counter = metrics.record_counter(self.stream_name)
+        self.buffer = []
+
+    def add_to_buffer(self, record):
+        self.buffer.append(record)
+        return bool(len(self.buffer) >= self.buffer_limit)
+
+    def empty_buffer(self):
+        for record in self.buffer:
+            yield record
+            self.counter.increment()
+        self.buffer = []
+
+    def write_schema(self):
+        singer.write_schema(
+            self.stream_name,
+            self.schema,
+            self.key_properties)
+
 def request(client, start_date, end_date, fields='all'):
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
@@ -120,8 +159,8 @@ def request(client, start_date, end_date, fields='all'):
                 'Completed retrieving all transactions on page %s of %s.',
                 response_json['page'],
                 response_json['total_pages'])
-        for transaction in response_json['transaction_details']:
-            yield transaction
+        chunk = response_json['transaction_details']
+        yield chunk
         try:
             url = next(
                 link['href'] for link in response_json['links']
@@ -131,64 +170,88 @@ def request(client, start_date, end_date, fields='all'):
             break
 
 def get_transactions(client, start_date, end_date, fields='all'):
+    '''
+    Divides the date range into segments no longer than MAX_DAYS_BETWEEN
+    and iterates through them to request transaction chunks and process them.
+    '''
+
     chunksize = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + chunksize < end_date:
         chunk_end_date = start_date + chunksize
-        chunk = request(client, start_date, chunk_end_date, fields)
-        for transaction in chunk:
-            yield transaction
+        for chunk in request(client, start_date, chunk_end_date, fields):
+            process_chunk(chunk)
         start_date = chunk_end_date + timedelta(days=1)
-    chunk = request(client, start_date, end_date, fields)
+    for chunk in request(client, start_date, end_date, fields):
+        process_chunk(chunk)
+
+    empty_all_buffers()
+
+def process_chunk(chunk):
+    '''
+    Sorts transaction data into the appropriate stream buffers, flushing the
+    buffers whenever they become full.
+    '''
     for transaction in chunk:
-        yield transaction
+        for stream_name, record in transaction.items():
+            stream = STREAMS[stream_name]
+            if record:
+                buffer_is_full = stream.add_to_buffer(record)
+                if buffer_is_full:
+                    for buf_record in stream.empty_buffer():
+                        transformed = singer.transform(buf_record, stream.schema)
+                        singer.write_record(stream.stream_name, transformed)
+            else:
+                continue
 
-def add_to_buffer(transaction, buffer):
-    id_ = transaction['transaction_info']['transaction_id']
-    for stream, data in transaction.items():
-        if data:
-            buffer[stream].append(data)
-            buffer[stream][-1]['transaction_id'] = id_
-        else:
-            continue
-    return buffer
+def empty_all_buffers():
+    for stream in STREAMS.values():
+        for buf_record in stream.empty_buffer():
+            transformed = singer.transform(buf_record, stream.schema)
+            singer.write_record(stream.stream_name, transformed)
+    for stream in STREAMS.values():
+        LOGGER.info(
+            "Completed sync of %s total records to stream '%s'.",
+            stream.counter.value,
+            stream.stream_name)
 
-def sync_stream(stream, records):
-    stream_name = stream.tap_stream_id
-    with metrics.record_counter(stream_name) as counter:
-        schema = stream.schema.to_dict()
-        singer.write_schema(
-            stream_name,
-            schema,
-            stream.key_properties)
-        for record in records:
-            record = singer.transform(record, schema)
-            singer.write_record(stream_name, record)
-            counter.increment()
-        return counter.value
+# def sync_stream(stream, records):
+#     stream_name = stream.tap_stream_id
+#     with metrics.record_counter(stream_name) as counter:
+#         schema = stream.schema.to_dict()
+#         singer.write_schema(
+#             stream_name,
+#             schema,
+#             stream.key_properties)
+#         for record in records:
+#             record = singer.transform(record, schema)
+#             singer.write_record(stream_name, record)
+#             counter.increment()
+#         return counter.value
 
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
+    for catalog_stream in catalog.streams:
+        stream_name = catalog_stream.tap_stream_id
+        if stream_name in selected_stream_names:
+            stream = Stream(catalog_stream)
+            stream.write_schema()
+            STREAMS[stream_name] = stream
 
-    transactions = get_transactions(
+    get_transactions(
         client=client,
-        start_date=datetime(2018, 7, 15),
-        end_date=datetime(2018, 7, 16))
-    transaction = next(transactions)
-    buffer = {stream: [] for stream in transaction.keys()}
-    buffer = add_to_buffer(transaction, buffer)
-    for transaction in transactions:
-        buffer = add_to_buffer(transaction, buffer)
+        start_date=datetime(2018, 6, 15),
+        end_date=datetime(2018, 7, 5))
 
-    for stream in catalog.streams:
-        stream_name = stream.tap_stream_id
-        if stream_name in selected_stream_names and buffer[stream_name]:
-            LOGGER.info("Starting sync on stream '%s'.", stream_name)
-            counter_value = sync_stream(stream, buffer[stream_name])
-            LOGGER.info(
-                "Completed syncing %s rows to stream '%s'.",
-                counter_value,
-                stream_name)
+    # for stream in catalog.streams:
+    #     stream_name = stream.tap_stream_id
+    #     if stream_name in selected_stream_names and buffer[stream_name]:
+    #         LOGGER.info("Starting sync on stream '%s'.", stream_name)
+    #         counter_value = sync_stream(stream, buffer[stream_name])
+    #         LOGGER.info(
+    #             "Completed syncing %s rows to stream '%s'.",
+    #             counter_value,
+    #             stream_name)
 
 @utils.handle_top_exception(LOGGER)
 def main():
