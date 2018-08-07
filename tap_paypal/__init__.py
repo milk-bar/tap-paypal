@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+'''A Singer tap for extracting transactions data from the PayPal Sync API.'''
+
 import os
 import json
 import urllib.parse
@@ -62,6 +65,10 @@ def load_all_schemas():
     return schemas
 
 def discover():
+    '''
+    Generates the catalog dictionary containing all metadata and
+    automatically selects all fields to be included.
+    '''
     raw_schemas = load_all_schemas()
     entries = []
 
@@ -300,6 +307,7 @@ def build_stream(catalog_stream, state):
     STREAMS[catalog_stream.tap_stream_id] = stream
 
 def get_selected_streams(catalog):
+    '''Using the catalog, returns a list of selected stream names.'''
     selected_stream_names = []
     for stream in catalog.streams:
         metadata = singer.metadata.to_map(stream.metadata)
@@ -327,6 +335,7 @@ def sync(config, state, catalog):
 
 @utils.handle_top_exception(LOGGER)
 def main():
+    '''Based on command line arguments, chooses discover or sync.'''
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
     if args.discover:
         catalog = discover()
