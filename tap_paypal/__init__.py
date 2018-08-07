@@ -128,17 +128,20 @@ class Stream():
     Stores schema data and a buffer of records for a particular stream.
     When a Stream's buffer reaches its `buffer_size`, it returns a
     boolean that the buffer should be emptied. Emptying the buffer resets the
-    buffer and returns a generator object with all records in the buffer.
+    buffer and writes all records to stdout.
+
+    Also tracks a bookmark for each record written out of the buffer.
     '''
     buffer_limit = 100
 
-    def __init__(self, stream, bookmark):
+    def __init__(self, stream, bookmark=None):
+        self.stream = stream
         self.stream_name = stream.tap_stream_id
         self.schema = stream.schema.to_dict()
         self.key_properties = stream.key_properties
         self.counter = metrics.record_counter(self.stream_name)
         self.buffer = []
-        self.bookmark = dateutil.parser.parse(bookmark)
+        self.bookmark = bookmark
 
     def add_to_buffer(self, record):
         self.buffer.append(record)
@@ -146,8 +149,13 @@ class Stream():
 
     def empty_buffer(self):
         for record in self.buffer:
-            yield record
-            self.counter.increment()
+            updated_date = dateutil.parser.parse(
+                record['transaction_updated_date'])
+            if updated_date >= self.bookmark:
+                transformed = singer.transform(record, self.schema)
+                singer.write_record(self.stream_name, transformed)
+                self.bookmark = updated_date
+                self.counter.increment()
         self.buffer = []
 
     def write_schema(self):
@@ -166,7 +174,7 @@ def request(client, start_date, end_date, fields='all'):
     yielding a generator of those 100-record chunks. Handles any pagination
     automatically using the `next` field returned in the response.
     '''
-    
+
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
         'start_date': start_date.astimezone().isoformat('T'),
@@ -212,15 +220,18 @@ def get_transactions(client, state, start_date=None, end_date=None, fields='all'
         start_date = chunk_end_date + timedelta(days=1)
     for chunk in request(client, start_date, end_date, fields):
         process_chunk(chunk, state)
-
     empty_all_buffers()
 
-def write_to_stream(stream, record, state, updated_at):
+def write_to_stream(stream, record, state):
     buffer_is_full = stream.add_to_buffer(record)
     if buffer_is_full:
-        for buf_record in stream.empty_buffer():
-            transformed = singer.transform(buf_record, stream.schema)
-            singer.write_record(stream.stream_name, transformed)
+        stream.empty_buffer()
+        state = singer.write_bookmark(
+            state=state,
+            tap_stream_id=stream.stream_name,
+            key='transaction_updated_date',
+            val=stream.bookmark.isoformat('T'))
+        singer.write_state(state)
 
 def process_chunk(chunk, state):
     '''
@@ -230,39 +241,39 @@ def process_chunk(chunk, state):
 
     for transaction in chunk:
         updated_date = transaction['transaction_info']['transaction_updated_date']
-        updated_date = dateutil.parser.parse(updated_date)
         id_ = transaction['transaction_info']['transaction_id']
         for stream_name, record in transaction.items():
             stream = STREAMS[stream_name]
-            if updated_date >= stream.bookmark and record:
+            if record:
                 record['transaction_id'] = id_
-                write_to_stream(stream, record, state, updated_date)
+                record['transaction_updated_date'] = updated_date
+                write_to_stream(stream, record, state)
 
 def empty_all_buffers():
     for stream in STREAMS.values():
-        for buf_record in stream.empty_buffer():
-            transformed = singer.transform(buf_record, stream.schema)
-            singer.write_record(stream.stream_name, transformed)
+        stream.empty_buffer()
     for stream in STREAMS.values():
         LOGGER.info(
             "Completed sync of %s records to stream '%s'.",
             stream.counter.value,
             stream.stream_name)
 
+def build_stream(catalog_stream, state):
+    bookmark = singer.get_bookmark(
+        state=state,
+        tap_stream_id=catalog_stream.tap_stream_id,
+        key='transaction_updated_date')
+    bookmark = dateutil.parser.parse(bookmark)
+    stream = Stream(catalog_stream, bookmark)
+    STREAMS[catalog_stream.tap_stream_id] = stream
+
 def sync(config, state, catalog):
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
     for catalog_stream in catalog.streams:
-        stream_name = catalog_stream.tap_stream_id
-        if stream_name in selected_stream_names:
-            bookmark = singer.get_bookmark(
-                state=state,
-                tap_stream_id=stream_name,
-                key='transaction_updated_date')
-            stream = Stream(catalog_stream, bookmark)
-            stream.write_schema()
-            STREAMS[stream_name] = stream
-
+        if catalog_stream.tap_stream_id in selected_stream_names:
+            build_stream(catalog_stream, state)
+            STREAMS[catalog_stream.tap_stream_id].write_schema()
     get_transactions(
         client=client,
         state=state,

@@ -31,6 +31,10 @@
     "transaction_id": {
       "type": ["null", "string"]
     },
+    "transaction_updated_date": {
+      "type": ["null", "string"],
+      "format": "date-time"
+    },
     "name": {
       "type": ["null", "string"]
     },

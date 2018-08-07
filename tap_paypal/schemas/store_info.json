@@ -5,6 +5,10 @@
     "transaction_id": {
       "type": ["null", "string"]
     },
+    "transaction_updated_date": {
+      "type": ["null", "string"],
+      "format": "date-time"
+    },
     "store_id": {
       "type": ["null", "string"]
     },

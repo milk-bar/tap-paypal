@@ -19,6 +19,10 @@
     "transaction_id": {
       "type": ["null", "string"]
     },
+    "transaction_updated_date": {
+      "type": ["null", "string"],
+      "format": "date-time"
+    },
     "item_details": {
       "type": ["null", "array"],
       "items": {
