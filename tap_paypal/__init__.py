@@ -126,7 +126,7 @@ class PayPalClient():
             response.raise_for_status()
         except requests.exceptions.HTTPError as error:
             message = "Request returned code {} with the following details: {}" \
-                .format(response.status_code, response.json()['details'])
+                .format(response.status_code, response.json())
             raise type(error)(message) from error
         else:
             return response.json()
@@ -219,13 +219,11 @@ def request(client, start_date, end_date, fields='all'):
         except StopIteration:
             break
 
-def get_transactions(client, state, start_date=None, end_date=None, fields='all'):
+def get_transactions(client, state, start_date, end_date=None, fields='all'):
     '''
     Divides the date range into segments no longer than MAX_DAYS_BETWEEN
     and iterates through them to request transaction chunks and process them.
     '''
-    if start_date is None:
-        start_date = datetime(2016, 7, 1).astimezone() # PayPal's oldest data is July 2016
     if end_date is None:
         end_date = datetime.utcnow().astimezone() - timedelta(days=1)
 
@@ -275,11 +273,15 @@ def empty_all_buffers(state):
 
 def build_stream(catalog_stream, state):
     '''Generates a new stream instance and adds to the global dictionary.'''
-    bookmark = singer.get_bookmark(
-        state=state,
-        tap_stream_id=catalog_stream.tap_stream_id,
-        key='transaction_updated_date')
-    bookmark = dateutil.parser.parse(bookmark)
+    if state:
+        bookmark = singer.get_bookmark(
+            state=state,
+            tap_stream_id=catalog_stream.tap_stream_id,
+            key='transaction_updated_date')
+        bookmark = dateutil.parser.parse(bookmark)
+    else:
+        # PayPal's oldest data is July 2016
+        bookmark = datetime(2016, 7, 1).astimezone()
     stream = Stream(catalog_stream, bookmark)
     STREAMS[catalog_stream.tap_stream_id] = stream
 
@@ -294,7 +296,6 @@ def sync(config, state, catalog):
         if catalog_stream.tap_stream_id in selected_stream_names:
             build_stream(catalog_stream, state)
             STREAMS[catalog_stream.tap_stream_id].write_schema()
-            
     oldest_updated_date = min([stream.bookmark for stream in STREAMS.values()])
     get_transactions(
         client=client,
