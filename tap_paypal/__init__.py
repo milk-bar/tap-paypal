@@ -20,26 +20,46 @@ ENDPOINTS = {
     'token': 'v1/oauth2/token'}
 STREAMS = {}
 
+def strip_query_string(url):
+    '''Remove the query string from a URL and return it as a dictionary of params.'''
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+    parsed = parsed._replace(query='')
+    url = parsed.geturl()
+    return url, params
+
+def truncate_date(timestamp):
+    '''Truncates a datetime object to only its date components.'''
+    return timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+
+def stream_is_selected(metadata):
+    '''Checks the metadata and returns if a stream is selected or not.'''
+    return metadata.get((), {}).get('selected', False)
+
 def get_abs_path(path):
+    '''Returns absolute file path.'''
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
 
 def load_json(path):
+    '''Load a JSON file as a dictionary.'''
     with open(path, 'r') as file:
         json_ = json.load(file)
     return json_
 
+def load_schema(schema_name):
+    '''Load a single schema in ./schemas by stream name as a dictionary.'''
+    path = os.path.join(get_abs_path('schemas'), schema_name + '.json')
+    schema = load_json(path)
+    return schema
+
 def load_all_schemas():
+    '''Load each schema in ./schemas into a dictionary with stream name keys.'''
     schemas = {}
     for filename in os.listdir(get_abs_path('schemas')):
         path = get_abs_path('schemas') + '/' + filename
         file_raw = filename.replace('.json', '')
         schemas[file_raw] = load_json(path)
     return schemas
-
-def load_schema(schema_name):
-    path = os.path.join(get_abs_path('schemas'), schema_name + '.json')
-    schema = load_json(path)
-    return schema
 
 def discover():
     raw_schemas = load_all_schemas()
@@ -80,25 +100,9 @@ def discover():
 
     return {'streams': entries}
 
-def stream_is_selected(metadata):
-    return metadata.get((), {}).get('selected', False)
-
-def get_selected_streams(catalog):
-    selected_stream_names = []
-    for stream in catalog.streams:
-        metadata = singer.metadata.to_map(stream.metadata)
-        if stream_is_selected(metadata):
-            selected_stream_names.append(stream.tap_stream_id)
-    return selected_stream_names
-
-def strip_query_string(url):
-    parsed = urllib.parse.urlparse(url)
-    params = urllib.parse.parse_qs(parsed.query)
-    parsed = parsed._replace(query='')
-    url = parsed.geturl()
-    return url, params
-
 class PayPalClient():
+    '''Authenticates and makes requests to the PayPal Sync API.'''
+
     def __init__(self, config):
         self.config = config
         oath_client = BackendApplicationClient(
@@ -107,6 +111,7 @@ class PayPalClient():
         self.get_access_token()
 
     def get_access_token(self):
+        '''Using stored credentials, gets an access token from the token API.'''
         url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['token'])
         self.session.fetch_token(
             token_url=url,
@@ -114,6 +119,7 @@ class PayPalClient():
             client_secret=self.config['client_secret'])
 
     def request(self, url, params):
+        '''Makes a GET request to the API and handles logging for any errors.'''
         url, addl_params = strip_query_string(url)
         params.update(addl_params)
         LOGGER.info("Making a request to '%s' using params: %s", url, params)
@@ -183,14 +189,46 @@ class Stream():
             self.schema,
             self.key_properties)
 
-def truncate_date(timestamp):
-    '''Truncates a datetime object to only its date components.'''
-    return timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+class BatchWriter():
+    '''
+    Sorts a batch of transactions by stream, filtering out any transactions
+    that don't meet replication key requirements, and writing the remainder
+    to the appropriate stream.
+    '''
+
+    def __init__(self, batch, state):
+        self.batch = batch
+        self.state = state
+
+    def process(self):
+        '''
+        Sorts transaction data into the appropriate stream buffers, emptying the
+        buffers whenever they become full.
+        '''
+        for transaction in self.batch:
+            updated_date = \
+                transaction['transaction_info']['transaction_updated_date']
+            id_ = transaction['transaction_info']['transaction_id']
+            for stream_name, record in transaction.items():
+                if record:
+                    record['transaction_id'] = id_
+                    record['transaction_updated_date'] = updated_date
+                    self.write_to_stream(stream_name, record)
+
+    def write_to_stream(self, stream_name, record):
+        '''Writes valid record to buffer, emptying buffer if buffer is full.'''
+        updated_date = dateutil.parser.parse(
+            record['transaction_updated_date'])
+        stream = STREAMS[stream_name]
+        if updated_date >= stream.bookmark:
+            buffer_is_full = stream.add_to_buffer(record)
+            if buffer_is_full:
+                stream.empty_buffer(self.state)
 
 def request(client, start_date, end_date, fields='all'):
     '''
     Makes a request to the API, retrieving transactions in chunks of 100 and
-    yielding a generator of those 100-record chunks. Handles any pagination
+    yielding a generator of those 100-record batches. Handles any pagination
     automatically using the `next` field returned in the response.
     '''
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
@@ -209,8 +247,8 @@ def request(client, start_date, end_date, fields='all'):
             'Completed retrieving all transactions on page %s of %s.',
             response['page'],
             response['total_pages'])
-        chunk = response['transaction_details']
-        yield chunk
+        batch = response['transaction_details']
+        yield batch
         try:
             url = next(
                 link['href'] for link in response['links']
@@ -219,50 +257,8 @@ def request(client, start_date, end_date, fields='all'):
         except StopIteration:
             break
 
-def get_transactions(client, state, start_date, end_date=None, fields='all'):
-    '''
-    Divides the date range into segments no longer than MAX_DAYS_BETWEEN
-    and iterates through them to request transaction chunks and process them.
-    '''
-    if end_date is None:
-        end_date = datetime.utcnow().astimezone() - timedelta(days=1)
-
-    chunksize = timedelta(days=MAX_DAYS_BETWEEN)
-    while start_date + chunksize < end_date:
-        chunk_end_date = start_date + chunksize
-        for chunk in request(client, start_date, chunk_end_date, fields):
-            process_chunk(chunk, state)
-        start_date = chunk_end_date + timedelta(days=1)
-    for chunk in request(client, start_date, end_date, fields):
-        process_chunk(chunk, state)
-    empty_all_buffers(state)
-
-def write_to_stream(stream_name, record, state):
-    '''Writes valid record to buffer, emptying buffer if buffer is full.'''
-    updated_date = dateutil.parser.parse(
-        record['transaction_updated_date'])
-    stream = STREAMS[stream_name]
-    if updated_date >= stream.bookmark:
-        buffer_is_full = stream.add_to_buffer(record)
-        if buffer_is_full:
-            stream.empty_buffer(state)
-
-def process_chunk(chunk, state):
-    '''
-    Sorts transaction data into the appropriate stream buffers, emptying the
-    buffers whenever they become full.
-    '''
-    for transaction in chunk:
-        updated_date = transaction['transaction_info']['transaction_updated_date']
-        id_ = transaction['transaction_info']['transaction_id']
-        for stream_name, record in transaction.items():
-            if record:
-                record['transaction_id'] = id_
-                record['transaction_updated_date'] = updated_date
-                write_to_stream(stream_name, record, state)
-
 def empty_all_buffers(state):
-    '''Called at end of sync, empties any remaining records in stream buffers.'''
+    '''Called at end of sync, empties remaining records in stream buffers.'''
     for stream in STREAMS.values():
         stream.empty_buffer(state)
     for stream in STREAMS.values():
@@ -270,6 +266,24 @@ def empty_all_buffers(state):
             "Completed sync of %s records to stream '%s'.",
             stream.counter.value,
             stream.stream_name)
+
+def get_transactions(client, state, start_date, end_date=None, fields='all'):
+    '''
+    Divides the date range into segments no longer than MAX_DAYS_BETWEEN
+    and iterates through them to request transaction batches and process them.
+    '''
+    if end_date is None:
+        end_date = datetime.utcnow().astimezone() - timedelta(days=1)
+
+    batch_size = timedelta(days=MAX_DAYS_BETWEEN)
+    while start_date + batch_size < end_date:
+        batch_end_date = start_date + batch_size
+        for batch in request(client, start_date, batch_end_date, fields):
+            BatchWriter(batch, state).process()
+        start_date = batch_end_date + timedelta(days=1)
+    for batch in request(client, start_date, end_date, fields):
+        BatchWriter(batch, state).process()
+    empty_all_buffers(state)
 
 def build_stream(catalog_stream, state):
     '''Generates a new stream instance and adds to the global dictionary.'''
@@ -284,6 +298,14 @@ def build_stream(catalog_stream, state):
         bookmark = datetime(2016, 7, 1).astimezone()
     stream = Stream(catalog_stream, bookmark)
     STREAMS[catalog_stream.tap_stream_id] = stream
+
+def get_selected_streams(catalog):
+    selected_stream_names = []
+    for stream in catalog.streams:
+        metadata = singer.metadata.to_map(stream.metadata)
+        if stream_is_selected(metadata):
+            selected_stream_names.append(stream.tap_stream_id)
+    return selected_stream_names
 
 def sync(config, state, catalog):
     '''
