@@ -49,9 +49,9 @@ def discover():
         top_level_metadata = {
             'inclusion': 'available',
             'selected': True,
+            'forced-replication-method': 'INCREMENTAL',
             'valid-replication_keys': ['transaction_updated_date'],
-            'selected-by-default': True,
-            'schema-name': 'paypal'}
+            'selected-by-default': True}
 
         metadata = singer.metadata.new()
         for key, val in top_level_metadata.items():
@@ -225,9 +225,9 @@ def get_transactions(client, state, start_date=None, end_date=None, fields='all'
     '''
 
     if start_date is None:
-        start_date = datetime(2016, 7, 1) # PayPal's oldest data is July 2016
+        start_date = datetime(2016, 7, 1).astimezone() # PayPal's oldest data is July 2016
     if end_date is None:
-        end_date = datetime.utcnow() - timedelta(days=1)
+        end_date = datetime.utcnow().astimezone() - timedelta(days=1)
 
     chunksize = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + chunksize < end_date:
@@ -285,11 +285,13 @@ def sync(config, state, catalog):
         if catalog_stream.tap_stream_id in selected_stream_names:
             build_stream(catalog_stream, state)
             STREAMS[catalog_stream.tap_stream_id].write_schema()
+
+    oldest_updated_date = min([stream.bookmark for stream in STREAMS.values()])
+    LOGGER.info(oldest_updated_date)
     get_transactions(
         client=client,
         state=state,
-        start_date=datetime(2018, 6, 1),
-        end_date=datetime(2018, 6, 10),
+        start_date=oldest_updated_date,
         fields=selected_stream_names)
 
 @utils.handle_top_exception(LOGGER)
