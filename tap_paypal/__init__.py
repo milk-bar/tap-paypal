@@ -43,15 +43,24 @@ def load_schema(schema_name):
 
 def discover():
     raw_schemas = load_all_schemas()
-    streams = []
+    entries = []
 
     for schema_name, schema in raw_schemas.items():
+        top_level_metadata = {
+            'inclusion': 'available',
+            'selected': True,
+            'valid-replication_keys': ['transaction_updated_date'],
+            'selected-by-default': True,
+            'schema-name': 'paypal'}
+
         metadata = singer.metadata.new()
-        metadata = singer.metadata.write(
-            compiled_metadata=metadata,
-            breadcrumb=(),
-            k='selected',
-            val=True)
+        for key, val in top_level_metadata.items():
+            metadata = singer.metadata.write(
+                compiled_metadata=metadata,
+                breadcrumb=(),
+                k=key,
+                val=val)
+
         for key in schema['properties'].keys():
             metadata = singer.metadata.write(
                 compiled_metadata=metadata,
@@ -59,7 +68,6 @@ def discover():
                 k='inclusion',
                 val='automatic')
 
-        # create and add catalog entry
         catalog_entry = {
             'stream': schema_name,
             'tap_stream_id': schema_name,
@@ -68,9 +76,9 @@ def discover():
             'key_properties': ['transaction_id'],
             'bookmark_properties': ['transaction_updated_date']
         }
-        streams.append(catalog_entry)
+        entries.append(catalog_entry)
 
-    return {'streams': streams}
+    return {'streams': entries}
 
 def stream_is_selected(metadata):
     return metadata.get((), {}).get('selected', False)
@@ -147,7 +155,7 @@ class Stream():
         self.buffer.append(record)
         return bool(len(self.buffer) >= self.buffer_limit)
 
-    def empty_buffer(self):
+    def empty_buffer(self, state):
         for record in self.buffer:
             updated_date = dateutil.parser.parse(
                 record['transaction_updated_date'])
@@ -157,6 +165,15 @@ class Stream():
                 self.bookmark = updated_date
                 self.counter.increment()
         self.buffer = []
+        self.save_state(state)
+
+    def save_state(self, state):
+        state = singer.write_bookmark(
+            state=state,
+            tap_stream_id=self.stream_name,
+            key='transaction_updated_date',
+            val=self.bookmark.isoformat('T'))
+        singer.write_state(state)
 
     def write_schema(self):
         singer.write_schema(
@@ -220,18 +237,13 @@ def get_transactions(client, state, start_date=None, end_date=None, fields='all'
         start_date = chunk_end_date + timedelta(days=1)
     for chunk in request(client, start_date, end_date, fields):
         process_chunk(chunk, state)
-    empty_all_buffers()
+    empty_all_buffers(state)
 
-def write_to_stream(stream, record, state):
+def write_to_stream(stream_name, record, state):
+    stream = STREAMS[stream_name]
     buffer_is_full = stream.add_to_buffer(record)
     if buffer_is_full:
-        stream.empty_buffer()
-        state = singer.write_bookmark(
-            state=state,
-            tap_stream_id=stream.stream_name,
-            key='transaction_updated_date',
-            val=stream.bookmark.isoformat('T'))
-        singer.write_state(state)
+        stream.empty_buffer(state)
 
 def process_chunk(chunk, state):
     '''
@@ -243,15 +255,14 @@ def process_chunk(chunk, state):
         updated_date = transaction['transaction_info']['transaction_updated_date']
         id_ = transaction['transaction_info']['transaction_id']
         for stream_name, record in transaction.items():
-            stream = STREAMS[stream_name]
             if record:
                 record['transaction_id'] = id_
                 record['transaction_updated_date'] = updated_date
-                write_to_stream(stream, record, state)
+                write_to_stream(stream_name, record, state)
 
-def empty_all_buffers():
+def empty_all_buffers(state):
     for stream in STREAMS.values():
-        stream.empty_buffer()
+        stream.empty_buffer(state)
     for stream in STREAMS.values():
         LOGGER.info(
             "Completed sync of %s records to stream '%s'.",
@@ -278,6 +289,7 @@ def sync(config, state, catalog):
         client=client,
         state=state,
         start_date=datetime(2018, 6, 1),
+        end_date=datetime(2018, 6, 10),
         fields=selected_stream_names)
 
 @utils.handle_top_exception(LOGGER)
