@@ -152,22 +152,23 @@ class Stream():
         self.bookmark = bookmark
 
     def add_to_buffer(self, record):
+        '''Add a record to the buffer and return True if the buffer is full.'''
         self.buffer.append(record)
         return bool(len(self.buffer) >= self.buffer_limit)
 
     def empty_buffer(self, state):
+        '''Empties the buffer, writing records to stdout and saving state.'''
         for record in self.buffer:
-            updated_date = dateutil.parser.parse(
+            transformed = singer.transform(record, self.schema)
+            singer.write_record(self.stream_name, transformed)
+            self.bookmark = dateutil.parser.parse(
                 record['transaction_updated_date'])
-            if updated_date >= self.bookmark:
-                transformed = singer.transform(record, self.schema)
-                singer.write_record(self.stream_name, transformed)
-                self.bookmark = updated_date
-                self.counter.increment()
+            self.counter.increment()
         self.buffer = []
         self.save_state(state)
 
     def save_state(self, state):
+        '''Writes bookmark to state and writes state to stdout.'''
         state = singer.write_bookmark(
             state=state,
             tap_stream_id=self.stream_name,
@@ -176,6 +177,7 @@ class Stream():
         singer.write_state(state)
 
     def write_schema(self):
+        '''Writes formatted schema to stdout.'''
         singer.write_schema(
             self.stream_name,
             self.schema,
@@ -191,7 +193,6 @@ def request(client, start_date, end_date, fields='all'):
     yielding a generator of those 100-record chunks. Handles any pagination
     automatically using the `next` field returned in the response.
     '''
-
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
         'start_date': start_date.astimezone().isoformat('T'),
@@ -223,7 +224,6 @@ def get_transactions(client, state, start_date=None, end_date=None, fields='all'
     Divides the date range into segments no longer than MAX_DAYS_BETWEEN
     and iterates through them to request transaction chunks and process them.
     '''
-
     if start_date is None:
         start_date = datetime(2016, 7, 1).astimezone() # PayPal's oldest data is July 2016
     if end_date is None:
@@ -240,17 +240,20 @@ def get_transactions(client, state, start_date=None, end_date=None, fields='all'
     empty_all_buffers(state)
 
 def write_to_stream(stream_name, record, state):
+    '''Writes valid record to buffer, emptying buffer if buffer is full.'''
+    updated_date = dateutil.parser.parse(
+        record['transaction_updated_date'])
     stream = STREAMS[stream_name]
-    buffer_is_full = stream.add_to_buffer(record)
-    if buffer_is_full:
-        stream.empty_buffer(state)
+    if updated_date >= stream.bookmark:
+        buffer_is_full = stream.add_to_buffer(record)
+        if buffer_is_full:
+            stream.empty_buffer(state)
 
 def process_chunk(chunk, state):
     '''
     Sorts transaction data into the appropriate stream buffers, emptying the
     buffers whenever they become full.
     '''
-
     for transaction in chunk:
         updated_date = transaction['transaction_info']['transaction_updated_date']
         id_ = transaction['transaction_info']['transaction_id']
@@ -261,6 +264,7 @@ def process_chunk(chunk, state):
                 write_to_stream(stream_name, record, state)
 
 def empty_all_buffers(state):
+    '''Called at end of sync, empties any remaining records in stream buffers.'''
     for stream in STREAMS.values():
         stream.empty_buffer(state)
     for stream in STREAMS.values():
@@ -270,6 +274,7 @@ def empty_all_buffers(state):
             stream.stream_name)
 
 def build_stream(catalog_stream, state):
+    '''Generates a new stream instance and adds to the global dictionary.'''
     bookmark = singer.get_bookmark(
         state=state,
         tap_stream_id=catalog_stream.tap_stream_id,
@@ -279,15 +284,18 @@ def build_stream(catalog_stream, state):
     STREAMS[catalog_stream.tap_stream_id] = stream
 
 def sync(config, state, catalog):
+    '''
+    Builds the streams dictionary and API client, gets the oldest bookmark of
+    all of the streams to use for the API call, then kicks off the sync.
+    '''
     client = PayPalClient(config)
     selected_stream_names = get_selected_streams(catalog)
     for catalog_stream in catalog.streams:
         if catalog_stream.tap_stream_id in selected_stream_names:
             build_stream(catalog_stream, state)
             STREAMS[catalog_stream.tap_stream_id].write_schema()
-
+            
     oldest_updated_date = min([stream.bookmark for stream in STREAMS.values()])
-    LOGGER.info(oldest_updated_date)
     get_transactions(
         client=client,
         state=state,
@@ -296,22 +304,13 @@ def sync(config, state, catalog):
 
 @utils.handle_top_exception(LOGGER)
 def main():
-    # Parse command line arguments
     args = utils.parse_args(REQUIRED_CONFIG_KEYS)
-
-    # If discover flag was passed, run discovery mode and dump output to stdout
     if args.discover:
         catalog = discover()
         print(json.dumps(catalog, indent=2))
-    # Otherwise run in sync mode
-    else:
-        # 'properties' is the legacy name of the catalog
-        if args.properties:
-            catalog = args.properties
-        # 'catalog' is the current name
-        elif args.catalog:
-            catalog = args.catalog
-            sync(args.config, args.state, catalog)
+    elif args.catalog:
+        catalog = args.catalog
+        sync(args.config, args.state, catalog)
 
 if __name__ == "__main__":
     main()
