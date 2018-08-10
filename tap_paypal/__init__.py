@@ -5,8 +5,10 @@
 import os
 import json
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 import dateutil.parser
+from dateutil.relativedelta import relativedelta
+import pytz
 import requests
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
@@ -16,7 +18,6 @@ from singer import utils
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
 LOGGER = singer.get_logger()
-MAX_DAYS_BETWEEN = 31
 BASE_URL = 'https://api.paypal.com'
 ENDPOINTS = {
     'transactions': 'v1/reporting/transactions',
@@ -171,8 +172,7 @@ class Stream():
             transformed = singer.transform(record, self.schema)
             singer.write_record(self.stream_name, transformed)
             self.bookmark = dateutil.parser \
-                .parse(record['transaction_updated_date']) \
-                .astimezone()
+                .parse(record['transaction_updated_date'])
             self.counter.increment()
         self.buffer = []
         self.save_state(state)
@@ -237,8 +237,8 @@ def request_and_paginate(client, start_date, end_date, fields='all'):
     '''
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
-        'start_date': start_date.astimezone().isoformat('T'),
-        'end_date': end_date.astimezone().isoformat('T'),
+        'start_date': start_date.isoformat('T'),
+        'end_date': end_date.isoformat('T'),
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
@@ -273,18 +273,18 @@ def empty_all_buffers(state):
 
 def get_transactions(client, state, start_date, end_date=None, fields='all'):
     '''
-    Divides the date range into segments no longer than MAX_DAYS_BETWEEN
+    Divides the date range into segments no longer than one month
     and iterates through them to request transaction batches and process them.
     '''
     if end_date is None:
-        end_date = datetime.utcnow().replace(microsecond=0).astimezone()
+        end_date = datetime.utcnow().replace(microsecond=0, tzinfo=pytz.utc)
 
-    batch_size = timedelta(days=MAX_DAYS_BETWEEN)
+    batch_size = relativedelta(months=+1, seconds=-1)
     while start_date + batch_size < end_date:
         batch_end_date = start_date + batch_size
         for batch in request_and_paginate(client, start_date, batch_end_date, fields):
             BatchWriter(batch, state).process()
-        start_date = batch_end_date + timedelta(days=1)
+        start_date = batch_end_date + relativedelta(seconds=+1)
     for batch in request_and_paginate(client, start_date, end_date, fields):
         BatchWriter(batch, state).process()
     empty_all_buffers(state)
@@ -299,7 +299,7 @@ def build_stream(catalog_stream, state):
         bookmark = dateutil.parser.parse(bookmark)
     else:
         # PayPal's oldest data is July 2016
-        bookmark = datetime(2016, 7, 1).astimezone()
+        bookmark = datetime(2016, 7, 1, tzinfo=pytz.utc)
     stream = Stream(catalog_stream, bookmark)
     STREAMS[catalog_stream.tap_stream_id] = stream
 
