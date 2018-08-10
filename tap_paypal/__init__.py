@@ -241,7 +241,9 @@ def request_and_paginate(client, start_date, end_date, fields='all'):
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
-        'Retrieving transactions between %s and %s.', start_date, end_date)
+        'Retrieving transactions between %s and %s.',
+        params['start_date'],
+        params['end_date'])
     while True:
         response = client.request(url, params=params)
         LOGGER.info(
