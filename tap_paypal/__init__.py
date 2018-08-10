@@ -228,7 +228,7 @@ class BatchWriter():
             if buffer_is_full:
                 stream.empty_buffer(self.state)
 
-def request(client, start_date, end_date, fields='all'):
+def request_and_paginate(client, start_date, end_date, fields='all'):
     '''
     Makes a request to the API, retrieving transactions in chunks of 100 and
     yielding a generator of those 100-record batches. Handles any pagination
@@ -279,10 +279,10 @@ def get_transactions(client, state, start_date, end_date=None, fields='all'):
     batch_size = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + batch_size < end_date:
         batch_end_date = start_date + batch_size
-        for batch in request(client, start_date, batch_end_date, fields):
+        for batch in request_and_paginate(client, start_date, batch_end_date, fields):
             BatchWriter(batch, state).process()
         start_date = batch_end_date + timedelta(days=1)
-    for batch in request(client, start_date, end_date, fields):
+    for batch in request_and_paginate(client, start_date, end_date, fields):
         BatchWriter(batch, state).process()
     empty_all_buffers(state)
 
