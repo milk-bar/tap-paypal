@@ -170,8 +170,9 @@ class Stream():
         for record in self.buffer:
             transformed = singer.transform(record, self.schema)
             singer.write_record(self.stream_name, transformed)
-            self.bookmark = dateutil.parser.parse(
-                record['transaction_updated_date'])
+            self.bookmark = dateutil.parser \
+                .parse(record['transaction_updated_date']) \
+                .astimezone()
             self.counter.increment()
         self.buffer = []
         self.save_state(state)
