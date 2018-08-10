@@ -31,10 +31,6 @@ def strip_query_string(url):
     url = parsed.geturl()
     return url, params
 
-def truncate_date(timestamp):
-    '''Truncates a datetime object to only its date components.'''
-    return timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
-
 def stream_is_selected(metadata):
     '''Checks the metadata and returns if a stream is selected or not.'''
     return metadata.get((), {}).get('selected', False)
@@ -241,13 +237,11 @@ def request(client, start_date, end_date, fields='all'):
     url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
     params = {
         'start_date': start_date.astimezone().isoformat('T'),
-        'end_date': truncate_date(end_date.astimezone()).isoformat('T'),
+        'end_date': end_date.astimezone().isoformat('T'),
         'fields': ','.join(fields) if isinstance(fields, list) else fields}
 
     LOGGER.info(
-        'Retrieving transactions between %s and %s.',
-        start_date.strftime('%Y-%m-%d'),
-        end_date.strftime('%Y-%m-%d'))
+        'Retrieving transactions between %s and %s.', start_date, end_date)
     while True:
         response = client.request(url, params=params)
         LOGGER.info(
@@ -280,7 +274,7 @@ def get_transactions(client, state, start_date, end_date=None, fields='all'):
     and iterates through them to request transaction batches and process them.
     '''
     if end_date is None:
-        end_date = datetime.utcnow().astimezone() - timedelta(days=1)
+        end_date = datetime.utcnow().replace(microsecond=0).astimezone()
 
     batch_size = timedelta(days=MAX_DAYS_BETWEEN)
     while start_date + batch_size < end_date:
