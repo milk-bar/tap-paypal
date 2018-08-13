@@ -21,6 +21,7 @@ LOGGER = singer.get_logger()
 BASE_URL = 'https://api.paypal.com'
 ENDPOINTS = {
     'transactions': 'v1/reporting/transactions',
+    'invoices': 'v1/invoicing/invoices',
     'token': 'v1/oauth2/token'}
 STREAMS = {}
 
@@ -105,7 +106,7 @@ def discover():
     return {'streams': entries}
 
 class PayPalClient():
-    '''Authenticates and makes requests to the PayPal Sync API.'''
+    '''Authenticates and makes requests to the PayPal Sync or Invoicing APIs.'''
 
     def __init__(self, config):
         self.config = config
@@ -122,7 +123,56 @@ class PayPalClient():
             client_id=self.config['client_id'],
             client_secret=self.config['client_secret'])
 
-    def request(self, url, params):
+    def get_transactions(self, start_date, end_date, fields='all'):
+        batches = self.paginate(
+            endpoint='transactions',
+            start_date=start_date,
+            end_date=end_date,
+            fields=fields)
+        for batch in batches:
+            yield batch
+
+    def get_invoices(self):
+        for batch in self.paginate(endpoint='invoices'):
+            details_batch = []
+            for invoice in batch:
+                invoice_details = self.get_invoice_details(invoice['id'])
+                details_batch.append(invoice_details)
+            yield details_batch
+
+    def get_invoice_details(self, invoice_id):
+        url = '/'.join([BASE_URL, ENDPOINTS['invoices'], invoice_id])
+        response = self.make_request(url)
+        del response['links']
+        return response
+
+    def paginate(self, endpoint, **kwargs):
+        '''
+        Makes a request to the API, retrieving transactions in chunks of 100
+        and handling any pagination automatically using the `next` field
+        returned in the response. Returns a generator that yields 100-item
+        batches.
+        '''
+        data_fields = {
+            'invoices': 'invoices',
+            'transactions': 'transaction_details'}
+
+        url = '/'.join([BASE_URL, ENDPOINTS[endpoint]])
+        params = kwargs
+        params['page_size'] = 100
+        while True:
+            response = self.make_request(url, params=params)
+            batch = response[data_fields[endpoint]]
+            yield batch
+            try:
+                url = next(
+                    link['href'] for link in response['links']
+                    if link['rel'] == 'next')
+                params = {}
+            except StopIteration:
+                break
+
+    def make_request(self, url, params={}):
         '''Makes a GET request to the API and handles logging for any errors.'''
         url, addl_params = strip_query_string(url)
         params.update(addl_params)
@@ -137,7 +187,8 @@ class PayPalClient():
         except requests.exceptions.HTTPError as error:
             message = "Request returned code {} with the following details: {}" \
                 .format(response.status_code, response.json())
-            raise type(error)(message) from error
+            DynamicExceptionClass = type(error)
+            raise DynamicExceptionClass(message) from error
         else:
             return response.json()
 
@@ -229,38 +280,6 @@ class BatchWriter():
             if buffer_is_full:
                 stream.empty_buffer(self.state)
 
-def request_and_paginate(client, start_date, end_date, fields='all'):
-    '''
-    Makes a request to the API, retrieving transactions in chunks of 100 and
-    yielding a generator of those 100-record batches. Handles any pagination
-    automatically using the `next` field returned in the response.
-    '''
-    url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
-    params = {
-        'start_date': start_date.isoformat('T'),
-        'end_date': end_date.isoformat('T'),
-        'fields': ','.join(fields) if isinstance(fields, list) else fields}
-
-    LOGGER.info(
-        'Retrieving transactions between %s and %s.',
-        params['start_date'],
-        params['end_date'])
-    while True:
-        response = client.request(url, params=params)
-        LOGGER.info(
-            'Completed retrieving all transactions on page %s of %s.',
-            response['page'],
-            response['total_pages'])
-        batch = response['transaction_details']
-        yield batch
-        try:
-            url = next(
-                link['href'] for link in response['links']
-                if link['rel'] == 'next')
-            params = {}
-        except StopIteration:
-            break
-
 def empty_all_buffers(state):
     '''Called at end of sync, empties remaining records in stream buffers.'''
     for stream in STREAMS.values():
@@ -282,10 +301,18 @@ def get_transactions(client, state, start_date, end_date=None, fields='all'):
     batch_size = relativedelta(months=+1, seconds=-1)
     while start_date + batch_size < end_date:
         batch_end_date = start_date + batch_size
-        for batch in request_and_paginate(client, start_date, batch_end_date, fields):
+        batches = client.get_transactions(
+            start_date=start_date.isoformat('T'),
+            end_date=batch_end_date.isoformat('T'),
+            fields=fields)
+        for batch in batches:
             BatchWriter(batch, state).process()
         start_date = batch_end_date + relativedelta(seconds=+1)
-    for batch in request_and_paginate(client, start_date, end_date, fields):
+    batches = client.get_transactions(
+        start_date=start_date.isoformat('T'),
+        end_date=end_date.isoformat('T'),
+        fields=fields)
+    for batch in batches:
         BatchWriter(batch, state).process()
     empty_all_buffers(state)
 
