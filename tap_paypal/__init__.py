@@ -172,8 +172,10 @@ class PayPalClient():
             except StopIteration:
                 break
 
-    def make_request(self, url, params={}):
+    def make_request(self, url, params=None):
         '''Makes a GET request to the API and handles logging for any errors.'''
+        if not params:
+            params = {}
         url, addl_params = strip_query_string(url)
         params.update(addl_params)
         LOGGER.info("Making a request to '%s' using params: %s", url, params)
