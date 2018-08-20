@@ -75,8 +75,11 @@ def discover():
             'inclusion': 'available',
             'selected': True,
             'forced-replication-method': 'INCREMENTAL',
-            'valid-replication_keys': ['transaction_updated_date'],
-            'selected-by-default': True}
+            'valid-replication-keys': ['transaction_updated_date']}
+
+        if schema_name == 'invoices':
+            top_level_metadata['forced-replication-method'] = 'FULL_TABLE'
+            del top_level_metadata['valid-replication-keys']
 
         metadata = singer.metadata.new()
         for key, val in top_level_metadata.items():
@@ -107,7 +110,6 @@ def discover():
 
 class PayPalClient():
     '''Authenticates and makes requests to the PayPal Sync or Invoicing APIs.'''
-
     def __init__(self, config):
         self.config = config
         oath_client = BackendApplicationClient(
@@ -252,7 +254,6 @@ class BatchWriter():
     that don't meet replication key requirements, and writing the remainder
     to the appropriate stream.
     '''
-
     def __init__(self, batch, state):
         self.batch = batch
         self.state = state
@@ -292,7 +293,7 @@ def empty_all_buffers(state):
             stream.counter.value,
             stream.stream_name)
 
-def get_transactions(client, state, start_date, end_date=None, fields='all'):
+def process_transactions(client, state, start_date, end_date=None, fields='all'):
     '''
     Divides the date range into segments no longer than one month
     and iterates through them to request transaction batches and process them.
@@ -317,6 +318,10 @@ def get_transactions(client, state, start_date, end_date=None, fields='all'):
     for batch in batches:
         BatchWriter(batch, state).process()
     empty_all_buffers(state)
+
+def process_invoices(client, state, start_date):
+
+    pass
 
 def build_stream(catalog_stream, state):
     '''Generates a new stream instance and adds to the global dictionary.'''
@@ -353,7 +358,7 @@ def sync(config, state, catalog):
             build_stream(catalog_stream, state)
             STREAMS[catalog_stream.tap_stream_id].write_schema()
     oldest_updated_date = min([stream.bookmark for stream in STREAMS.values()])
-    get_transactions(
+    get_records(
         client=client,
         state=state,
         start_date=oldest_updated_date,
