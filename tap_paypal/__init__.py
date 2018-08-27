@@ -108,7 +108,7 @@ def discover():
 
     return {'streams': entries}
 
-class PayPalClient():
+class PayPalClient:
     '''Authenticates and makes requests to the PayPal Sync or Invoicing APIs.'''
     def __init__(self, config):
         self.config = config
@@ -196,7 +196,7 @@ class PayPalClient():
         else:
             return response.json()
 
-class Stream():
+class Stream:
     '''
     Stores schema data and a buffer of records for a particular stream.
     When a Stream's buffer reaches its `buffer_size`, it returns a
@@ -248,22 +248,21 @@ class Stream():
             self.schema,
             self.key_properties)
 
-class BatchWriter():
+class BatchWriter:
     '''
     Sorts a batch of transactions by stream, filtering out any transactions
     that don't meet replication key requirements, and writing the remainder
     to the appropriate stream.
     '''
-    def __init__(self, batch, state):
-        self.batch = batch
+    def __init__(self, state):
         self.state = state
 
-    def process(self):
+    def process(self, batch):
         '''
         Sorts transaction data into the appropriate stream buffers, emptying the
         buffers whenever they become full.
         '''
-        for transaction in self.batch:
+        for transaction in batch:
             updated_date = \
                 transaction['transaction_info']['transaction_updated_date']
             id_ = transaction['transaction_info']['transaction_id']
@@ -301,6 +300,7 @@ def process_transactions(client, state, start_date, end_date=None, fields='all')
     if end_date is None:
         end_date = datetime.utcnow().replace(microsecond=0, tzinfo=pytz.utc)
 
+    writer = BatchWriter(state)
     batch_size = relativedelta(months=+1, seconds=-1)
     while start_date + batch_size < end_date:
         batch_end_date = start_date + batch_size
@@ -309,14 +309,14 @@ def process_transactions(client, state, start_date, end_date=None, fields='all')
             end_date=batch_end_date.isoformat('T'),
             fields=fields)
         for batch in batches:
-            BatchWriter(batch, state).process()
+            writer.process(batch)
         start_date = batch_end_date + relativedelta(seconds=+1)
     batches = client.get_transactions(
         start_date=start_date.isoformat('T'),
         end_date=end_date.isoformat('T'),
         fields=fields)
     for batch in batches:
-        BatchWriter(batch, state).process()
+        writer.process(batch)
     empty_all_buffers(state)
 
 def process_invoices(client, state, start_date):
