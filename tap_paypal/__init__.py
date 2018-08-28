@@ -4,34 +4,18 @@
 
 import os
 import json
-import urllib.parse
 from datetime import datetime
 import dateutil.parser
 from dateutil.relativedelta import relativedelta
 import pytz
 import requests
-from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
-from requests_oauthlib import OAuth2Session
 import singer
 from singer import metrics
 from singer import utils
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
 LOGGER = singer.get_logger()
-BASE_URL = 'https://api.paypal.com'
-ENDPOINTS = {
-    'transactions': 'v1/reporting/transactions',
-    'invoices': 'v1/invoicing/invoices',
-    'token': 'v1/oauth2/token'}
 STREAMS = {}
-
-def strip_query_string(url):
-    '''Remove the query string from a URL and return it as a dictionary of params.'''
-    parsed = urllib.parse.urlparse(url)
-    params = urllib.parse.parse_qs(parsed.query)
-    parsed = parsed._replace(query='')
-    url = parsed.geturl()
-    return url, params
 
 def stream_is_selected(metadata):
     '''Checks the metadata and returns if a stream is selected or not.'''
@@ -107,94 +91,6 @@ def discover():
         entries.append(catalog_entry)
 
     return {'streams': entries}
-
-class PayPalClient:
-    '''Authenticates and makes requests to the PayPal Sync or Invoicing APIs.'''
-    def __init__(self, config):
-        self.config = config
-        oath_client = BackendApplicationClient(
-            client_id=self.config['client_id'])
-        self.session = OAuth2Session(client=oath_client)
-        self.get_access_token()
-
-    def get_access_token(self):
-        '''Using stored credentials, gets an access token from the token API.'''
-        url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['token'])
-        self.session.fetch_token(
-            token_url=url,
-            client_id=self.config['client_id'],
-            client_secret=self.config['client_secret'])
-
-    def get_transactions(self, start_date, end_date, fields='all'):
-        batches = self.paginate(
-            endpoint='transactions',
-            start_date=start_date,
-            end_date=end_date,
-            fields=fields)
-        for batch in batches:
-            yield batch
-
-    def get_invoices(self):
-        for batch in self.paginate(endpoint='invoices'):
-            details_batch = []
-            for invoice in batch:
-                invoice_details = self.get_invoice_details(invoice['id'])
-                details_batch.append(invoice_details)
-            yield details_batch
-
-    def get_invoice_details(self, invoice_id):
-        url = '/'.join([BASE_URL, ENDPOINTS['invoices'], invoice_id])
-        response = self.make_request(url)
-        del response['links']
-        return response
-
-    def paginate(self, endpoint, **kwargs):
-        '''
-        Makes a request to the API, retrieving transactions in chunks of 100
-        and handling any pagination automatically using the `next` field
-        returned in the response. Returns a generator that yields 100-item
-        batches.
-        '''
-        data_fields = {
-            'invoices': 'invoices',
-            'transactions': 'transaction_details'}
-
-        url = '/'.join([BASE_URL, ENDPOINTS[endpoint]])
-        params = kwargs
-        params['page_size'] = 100
-        while True:
-            response = self.make_request(url, params=params)
-            batch = response[data_fields[endpoint]]
-            yield batch
-            try:
-                url = next(
-                    link['href'] for link in response['links']
-                    if link['rel'] == 'next')
-                params = {}
-            except StopIteration:
-                break
-
-    def make_request(self, url, params=None):
-        '''Makes a GET request to the API and handles logging for any errors.'''
-        if not params:
-            params = {}
-        url, addl_params = strip_query_string(url)
-        params.update(addl_params)
-        LOGGER.info("Making a request to '%s' using params: %s", url, params)
-        try:
-            response = self.session.get(url, params=params)
-        except TokenExpiredError:
-            self.get_access_token()
-            response = self.session.get(url, params=params)
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as error:
-            message = "Request returned code {} with the following details: {}" \
-                .format(response.status_code, response.json())
-            DynamicExceptionClass = type(error)
-            raise DynamicExceptionClass(message) from error
-        else:
-            return response.json()
 
 class Stream:
     '''
