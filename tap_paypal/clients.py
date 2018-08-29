@@ -147,7 +147,7 @@ class InvoiceClient(PayPalClient):
             for invoice in batch:
                 record = self.get_invoice_details(invoice['id'])
                 # Replace PDT with offset so it's readable by singer transformer/dateutil
-                date_pattern = r'"(\d{4}-\d{2}-\d{2} (?:\d{2}:\d{2}:\d{2})?) PDT"'
+                date_pattern = r'"(\d{4}-\d{2}-\d{2}( ?:\d{2}:\d{2}:\d{2})?) PDT"'
                 record = json.loads(
                     re.sub(date_pattern, r'"\1-7:00"', json.dumps(record)))
                 created_date = dateutil.parser.parse(
