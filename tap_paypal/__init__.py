@@ -34,12 +34,6 @@ def load_json(path):
         json_ = json.load(file)
     return json_
 
-def load_schema(schema_name):
-    '''Load a single schema in ./schemas by stream name as a dictionary.'''
-    path = os.path.join(get_abs_path('schemas'), schema_name + '.json')
-    schema = load_json(path)
-    return schema
-
 def load_all_schemas():
     '''Load each schema in ./schemas into a dictionary with stream name keys.'''
     schemas = {}
