@@ -146,13 +146,18 @@ class InvoiceClient(PayPalClient):
         for batch in self.paginate():
             for invoice in batch:
                 record = self.get_invoice_details(invoice['id'])
+
                 # Replace PDT with offset so it's readable by singer transformer/dateutil
-                date_pattern = r'"(\d{4}-\d{2}-\d{2}( ?:\d{2}:\d{2}:\d{2})?) PDT"'
-                record = json.loads(
-                    re.sub(date_pattern, r'"\1-7:00"', json.dumps(record)))
+                as_string = json.dumps(record)
+                date_pattern = r'"(\d{4}-\d{2}-\d{2}) PDT"'
+                as_string = re.sub(date_pattern, r'"\1 00:00:00-7:00"', as_string)
+                timestamp_pattern = r'"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) PDT"'
+                as_string = re.sub(timestamp_pattern, r'"\1-7:00"', as_string)
+                record = json.loads(as_string)
+
                 created_date = dateutil.parser.parse(
-                    record['metadata']['created_date'],
-                    tzinfos={'PDT': -7 * 3600})
+                    record['metadata']['created_date'])
+
                 if start_date is None:
                     yield record
                 elif created_date >= start_date:
