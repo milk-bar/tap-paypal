@@ -1,4 +1,6 @@
+from datetime import datetime
 import urllib.parse
+from dateutil.relativedelta import relativedelta
 from requests.exceptions import HTTPError
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
@@ -21,14 +23,15 @@ def strip_query_string(url):
 
 class PayPalClient:
     '''Authenticates and makes requests to a PayPal API.'''
+    records_key = None
+    endpoint = None
+
     def __init__(self, config):
         self.config = config
         oath_client = BackendApplicationClient(
             client_id=self.config['client_id'])
         self.session = OAuth2Session(client=oath_client)
         self.get_access_token()
-        self.records_key = None
-        self.endpoint = None
 
     def get_access_token(self):
         '''Using stored credentials, gets an access token from the token API.'''
@@ -86,10 +89,23 @@ class TransactionClient(PayPalClient):
     records_key = 'transaction_details'
     endpoint = ENDPOINTS['transactions']
 
-    def get_records(self, start_date, end_date, fields='all'):
+    def get_records(self, start_date, fields='all'):
+        if end_date is None:
+            end_date = datetime.utcnow() \
+                .replace(microsecond=0, tzinfo=pytz.utc)
+        delta = relativedelta(months=+1, seconds=-1)
+        while start_date + delta < end_date:
+            batch_end_date = start_date + delta
+            batches = self.paginate(
+                start_date=start_date.isoformat('T'),
+                end_date=batch_end_date.isoformat('T'),
+                fields=fields)
+            for batch in batches:
+                yield batch
+            start_date = batch_end_date + relativedelta(seconds=+1)
         batches = self.paginate(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date.isoformat('T'),
+            end_date=end_date.isoformat('T'),
             fields=fields)
         for batch in batches:
             yield batch
@@ -98,16 +114,16 @@ class InvoiceClient(PayPalClient):
     records_key = 'invoices'
     endpoint = ENDPOINTS['invoices']
 
-    def get_records(self):
+    def get_invoice_details(self, invoice_id):
+        url = '/'.join([BASE_URL, self.endpoint, invoice_id])
+        response = self.make_request(url)
+        del response['links']
+        return response
+
+    def get_records(self, start_date):
         for batch in self.paginate():
             details_batch = []
             for invoice in batch:
                 invoice_details = self.get_invoice_details(invoice['id'])
                 details_batch.append(invoice_details)
             yield details_batch
-
-    def get_invoice_details(self, invoice_id):
-        url = '/'.join([BASE_URL, self.endpoint, invoice_id])
-        response = self.make_request(url)
-        del response['links']
-        return response
