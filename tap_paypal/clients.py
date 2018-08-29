@@ -1,3 +1,5 @@
+import json
+import re
 from datetime import datetime
 import urllib.parse
 import pytz
@@ -102,7 +104,8 @@ class TransactionClient(PayPalClient):
                 end_date=batch_end_date.isoformat('T'),
                 fields=fields)
             for batch in batches:
-                yield batch
+                for transaction in batch:
+                    yield transaction
             start_date = batch_end_date + relativedelta(seconds=+1)
         batches = self.paginate(
             start_date=start_date.isoformat('T'),
@@ -125,11 +128,15 @@ class InvoiceClient(PayPalClient):
     def get_records(self, start_date):
         for batch in self.paginate():
             for invoice in batch:
-                invoice_details = self.get_invoice_details(invoice['id'])
+                record = self.get_invoice_details(invoice['id'])
+                # Replace PDT with offset so it's readable by singer transformer/dateutil
+                date_pattern = r'"(\d{4}-\d{2}-\d{2} (?:\d{2}:\d{2}:\d{2})?) PDT"'
+                record = json.loads(
+                    re.sub(date_pattern, r'"\1-7:00"', json.dumps(record)))
                 created_date = dateutil.parser.parse(
-                    invoice_details['metadata']['created_date'],
+                    record['metadata']['created_date'],
                     tzinfos={'PDT': -7 * 3600})
                 if created_date >= start_date:
-                    yield invoice_details
+                    yield record
                 else:
                     return

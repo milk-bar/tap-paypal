@@ -1,27 +1,22 @@
 import os
 import json
 from datetime import datetime
-import pytz
 import requests
 import dateutil
 import singer
 from singer import utils
 from clients import TransactionClient, InvoiceClient
-from stream import BatchWriter, StreamBuffer, BUFFERS
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
 CLIENTS = {
     'transactions': TransactionClient,
-    'invocies': InvoiceClient
-}
+    'invoices': InvoiceClient}
 EXTRA_ARGS = {
     'transactions': {'fields': 'all'},
-    'invoices': {}
-}
+    'invoices': {}}
 REPLICATION_KEYS = {
-    'transactions': 'transaction_updated_date',
-    'invoices': 'created_date'
-}
+    'transactions': ['transaction_info', 'transaction_updated_date'],
+    'invoices': ['metadata', 'created_date']}
 LOGGER = singer.get_logger()
 
 def stream_is_selected(metadata):
@@ -66,12 +61,16 @@ def discover():
     bookmark_properties = {
         'invoices': 'created_date',
         'transactions': 'transaction_updated_date'}
+    forced_replication_method = {
+        'invoices': 'FULL_TABLE',
+        'transactions': 'INCREMENTAL'
+    }
 
     for schema_name, schema in raw_schemas.items():
         top_level_metadata = {
             'inclusion': 'available',
             'selected': True,
-            'forced-replication-method': 'INCREMENTAL',
+            'forced-replication-method': forced_replication_method[schema_name],
             'valid-replication-keys': bookmark_properties[schema_name]}
 
         metadata = singer.metadata.new()
@@ -110,20 +109,27 @@ def get_selected_streams(catalog):
             selected_stream_names.append(stream.tap_stream_id)
     return selected_stream_names
 
-def write_batch(batch, state, stream, replication_key):
-    stream_name = stream.tap_stream_id
-    for record in batch:
-        transformed = singer.transform(record, stream.schema)
-        singer.write_record(stream_name, transformed)
-        bookmark = dateutil.parser \
-            .parse(record[replication_key])
+def get_replication_value(record, keys):
+    '''Recursively navigate a record by a list of keys and return a value.'''
+    copied_keys = keys.copy()
+    first_key = copied_keys.pop(0)
+    value = record[first_key]
+    if copied_keys:
+        value = get_replication_value(value, copied_keys)
+        return value
+    else:
+        return value
 
+def write_record(record, state, stream, replication_keys):
+    stream_name = stream.tap_stream_id
+    transformed = singer.transform(record, stream.schema.to_dict())
+    singer.write_record(stream_name, transformed)
+    bookmark = get_replication_value(record, replication_keys)
     state = singer.write_bookmark(
         state=state,
         tap_stream_id=stream_name,
-        key=replication_key,
-        val=bookmark.isoformat('T'))
-
+        key=replication_keys[-1],
+        val=bookmark)
     singer.write_state(state)
 
 def sync(config, state, catalog):
@@ -131,19 +137,22 @@ def sync(config, state, catalog):
     for stream in catalog.streams:
         stream_name = stream.tap_stream_id
         if stream_name in selected_stream_names:
-            replication_key = REPLICATION_KEYS[stream_name]
+            replication_keys = REPLICATION_KEYS[stream_name]
             bookmark = singer.get_bookmark(
                 state=state,
                 tap_stream_id=stream_name,
-                key=replication_key)
+                key=replication_keys[-1])
+            start_date = dateutil.parser.parse(
+                bookmark,
+                tzinfos={'PDT': -7 * 3600})
             client = CLIENTS[stream_name](config)
             singer.write_schema(
-                stream.stream_name,
-                stream.schema,
+                stream_name,
+                stream.schema.to_dict(),
                 stream.key_properties)
-            batches = client.get_records(start_date=bookmark, **EXTRA_ARGS[stream_name])
-            for batch in batches:
-                write_batch(batch, state, stream, replication_key)
+            records = client.get_records(start_date=start_date, **EXTRA_ARGS[stream_name])
+            for record in records:
+                write_record(record, state, stream, replication_keys)
 
 @utils.handle_top_exception(LOGGER)
 def main():
