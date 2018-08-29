@@ -122,9 +122,8 @@ class InvoiceClient(PayPalClient):
     def paginate(self, **kwargs):
         '''
         Makes a request to the API, retrieving transactions in chunks of 100
-        and handling any pagination automatically using the `next` field
-        returned in the response. Returns a generator that yields 100-item
-        batches.
+        and handling any pagination automatically using the `page` and
+        `page_size` fields. Returns a generator that yields 100-item batches.
         '''
         url = '/'.join([BASE_URL, self.endpoint])
         params = kwargs
