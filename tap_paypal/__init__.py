@@ -4,7 +4,7 @@ from datetime import datetime
 import requests
 import dateutil
 import singer
-from singer import utils
+from singer import utils, metrics
 from clients import TransactionClient, InvoiceClient
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
@@ -151,8 +151,10 @@ def sync(config, state, catalog):
                 stream.schema.to_dict(),
                 stream.key_properties)
             records = client.get_records(start_date=start_date, **EXTRA_ARGS[stream_name])
-            for record in records:
-                write_record(record, state, stream, replication_keys)
+            with metrics.record_counter(stream_name) as counter:
+                for record in records:
+                    write_record(record, state, stream, replication_keys)
+                    counter.increment()
 
 @utils.handle_top_exception(LOGGER)
 def main():
