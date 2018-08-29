@@ -131,7 +131,7 @@
           "type": ["null", "string"]
         },
         "additional_info": {
-          "type": ["null", "string"],
+          "type": ["null", "string"]
         }
       }
     },
