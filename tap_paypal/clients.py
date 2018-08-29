@@ -125,7 +125,7 @@ class InvoiceClient(PayPalClient):
         del response['links']
         return response
 
-    def get_records(self, start_date):
+    def get_records(self, start_date=None):
         for batch in self.paginate():
             for invoice in batch:
                 record = self.get_invoice_details(invoice['id'])
@@ -136,7 +136,9 @@ class InvoiceClient(PayPalClient):
                 created_date = dateutil.parser.parse(
                     record['metadata']['created_date'],
                     tzinfos={'PDT': -7 * 3600})
-                if created_date >= start_date:
+                if start_date is None:
+                    yield record
+                elif created_date >= start_date:
                     yield record
                 else:
                     return

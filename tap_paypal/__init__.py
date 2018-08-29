@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import requests
 import dateutil
+import pytz
 import singer
 from singer import utils, metrics
 from clients import TransactionClient, InvoiceClient
@@ -142,9 +143,17 @@ def sync(config, state, catalog):
                 state=state,
                 tap_stream_id=stream_name,
                 key=replication_keys[-1])
-            start_date = dateutil.parser.parse(
-                bookmark,
-                tzinfos={'PDT': -7 * 3600})
+
+            if bookmark:
+                start_date = dateutil.parser.parse(bookmark, tzinfos={'PDT': -7 * 3600})
+            elif stream_name == 'transactions':
+                start_date = datetime(2016, 7, 1, tzinfo=pytz.utc)
+            elif stream_name == 'invoices':
+                start_date = None
+            else:
+                message = 'No state file or default start date provided for stream %s'
+                LOGGER.critical(message, stream_name)
+
             client = CLIENTS[stream_name](config)
             singer.write_schema(
                 stream_name,
