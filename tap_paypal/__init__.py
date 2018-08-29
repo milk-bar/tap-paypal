@@ -145,7 +145,7 @@ def sync(config, state, catalog):
             elif stream_name == 'invoices':
                 start_date = None
             else:
-                message = 'No state file or default start date provided for stream %s'
+                message = 'No state file or default start date provided for stream %s.'
                 LOGGER.critical(message, stream_name)
 
             client = CLIENTS[stream_name](config)

@@ -138,7 +138,10 @@ class InvoiceClient(PayPalClient):
     def get_invoice_details(self, invoice_id):
         url = '/'.join([BASE_URL, self.endpoint, invoice_id])
         response = self.make_request(url)
-        del response['links']
+        try:
+            del response['links']
+        except KeyError:
+            pass
         return response
 
     def get_records(self, start_date=None):
