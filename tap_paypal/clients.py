@@ -155,7 +155,6 @@ class InvoiceClient(PayPalClient):
                 as_string = re.sub(date_pattern, r'"\1 00:00:00-7:00"', as_string)
                 timestamp_pattern = r'"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (?:PDT|PST)"'
                 as_string = re.sub(timestamp_pattern, r'"\1-7:00"', as_string)
-                print(as_string)
                 record = json.loads(as_string)
 
                 created_date = dateutil.parser.parse(
