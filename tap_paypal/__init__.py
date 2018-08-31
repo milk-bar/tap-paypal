@@ -149,6 +149,7 @@ def sync(config, state, catalog):
                 LOGGER.critical(message, stream_name)
 
             client = CLIENTS[stream_name](config)
+            LOGGER.info("Beginning sync of stream '%s'...", stream_name)
             singer.write_schema(
                 stream_name,
                 stream.schema.to_dict(),
@@ -158,6 +159,7 @@ def sync(config, state, catalog):
                 for record in records:
                     write_record(record, state, stream, replication_keys)
                     counter.increment()
+            LOGGER.info("Finished syncing stream '%s'.")
 
 @utils.handle_top_exception(LOGGER)
 def main():
