@@ -1,0 +1,438 @@
+{
+  "type": ["null", "object"],
+  "additionalProperties": false,
+  "definitions": {
+    "money": {
+      "type": ["null", "object"],
+      "properties": {
+        "currency_code": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": ["currency_code", "value"]
+    },
+    "address": {
+      "type": ["null", "object"],
+      "properties": {
+        "line1": {
+          "type": "string"
+        },
+        "line2": {
+          "type": ["null", "string"]
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": ["null", "string"]
+        },
+        "country_code": {
+          "type": "string"
+        },
+        "postal_code": {
+          "type": ["null", "string"]
+        }
+      },
+      "required": ["line1", "city", "country_code"]
+    }
+  },
+  "properties": {
+    "transaction_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "paypal_account_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "paypal_reference_id": {
+          "type": ["null", "string"]
+        },
+        "paypal_reference_id_type": {
+          "type": ["null", "string"]
+        },
+        "transaction_event_code": {
+          "type": ["null", "string"]
+        },
+        "transaction_initiation_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "transaction_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "fee_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "discount_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "insurance_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "sales_tax_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "shipping_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "shipping_discount_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "shipping_tax_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "other_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "tip_amount": {
+          "$ref": "#/definitions/money"
+        },
+        "transaction_status": {
+          "type": ["null", "string"]
+        },
+        "transaction_subject": {
+          "type": ["null", "string"]
+        },
+        "payment_tracking_id": {
+          "type": ["null", "string"]
+        },
+        "bank_reference_id": {
+          "type": ["null", "string"]
+        },
+        "ending_balance": {
+          "$ref": "#/definitions/money"
+        },
+        "available_balance": {
+          "$ref": "#/definitions/money"
+        },
+        "invoice_id": {
+          "type": ["null", "string"]
+        },
+        "custom_field": {
+          "type": ["null", "string"]
+        },
+        "protection_eligibility": {
+          "type": ["null", "string"]
+        },
+        "credit_term": {
+          "type": ["null", "string"]
+        },
+        "credit_transactional_fee": {
+          "$ref": "#/definitions/money"
+        },
+        "credit_promotional_fee": {
+          "$ref": "#/definitions/money"
+        },
+        "annual_percentage_rate": {
+          "type": ["null", "string"]
+        },
+        "payment_method_type": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "payer_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "account_id": {
+          "type": ["null", "string"]
+        },
+        "email_address": {
+          "type": ["null", "string"]
+        },
+        "phone_number": {
+          "type": ["null", "object"],
+          "properties": {
+            "country_code": {
+              "type": "string"
+            },
+            "national_number": {
+              "type": "string"
+            },
+            "extension_number": {
+              "type": ["null", "string"]
+            }
+          },
+          "required": ["country_code", "national_number"]
+        },
+        "address_status": {
+          "type": ["null", "string"]
+        },
+        "payer_status": {
+          "type": ["null", "string"]
+        },
+        "payer_name": {
+          "type": ["null", "object"],
+          "properties": {
+            "prefix": {
+              "type": ["null", "string"]
+            },
+            "given_name": {
+              "type": ["null", "string"]
+            },
+            "surname": {
+              "type": ["null", "string"]
+            },
+            "middle_name": {
+              "type": ["null", "string"]
+            },
+            "suffix": {
+              "type": ["null", "string"]
+            },
+            "alternate_full_name": {
+              "type": ["null", "string"]
+            },
+            "full_name": {
+              "type": ["null", "string"]
+            }
+          }
+        },
+        "country_code": {
+          "type": ["null", "string"]
+        },
+        "address": {
+          "type": ["null", "object"],
+          "properties": {
+            "line1": {
+              "type": "string"
+            },
+            "line2": {
+              "type": ["null", "string"]
+            },
+            "city": {
+              "type": "string"
+            },
+            "state": {
+              "type": ["null", "string"]
+            },
+            "country_code": {
+              "type": "string"
+            },
+            "postal_code": {
+              "type": ["null", "string"]
+            }
+          },
+          "required": ["line1", "city", "country_code"]
+        }
+      }
+    },
+    "cart_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "item_details": {
+          "type": ["null", "array"],
+          "items": {
+            "type": "object",
+            "properties": {
+              "item_code": {
+                "type": ["null", "string"]
+              },
+              "item_name": {
+                "type": ["null", "string"]
+              },
+              "item_description": {
+                "type": ["null", "string"]
+              },
+              "item_options": {
+                "type": ["null", "string"]
+              },
+              "item_quantity": {
+                "type": ["null", "string"]
+              },
+              "item_unit_price": {
+                "$ref": "#/definitions/money"
+              },
+              "item_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "discount_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "adjustment_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "gift_wrap_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "tax_percentage": {
+                "type": ["null", "string"]
+              },
+              "tax_amounts": {
+                "$ref": "#/definitions/money"
+              },
+              "basic_shipping_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "extra_shipping_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "handling_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "insurance_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "total_item_amount": {
+                "$ref": "#/definitions/money"
+              },
+              "invoice_number": {
+                "type": ["null", "string"]
+              },
+              "checkout_options": {
+                "type": ["null", "array"],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "checkout_option_name": {
+                      "type": ["null", "string"]
+                    },
+                    "checkout_option_value": {
+                      "type": ["null", "string"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tax_inclusive": {
+          "type": ["null", "boolean"]
+        },
+        "paypal_invoice_id": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "shipping_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "name": {
+          "type": ["null", "string"]
+        },
+        "method": {
+          "type": ["null", "string"]
+        },
+        "address": {
+          "$ref": "#/definitions/address"
+        },
+        "secondary_shipping_address": {
+          "$ref": "#/definitions/address"
+        }
+      }
+    },
+    "store_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "store_id": {
+          "type": ["null", "string"]
+        },
+        "terminal_id": {
+          "type": ["null", "string"]
+        }
+      }
+    },
+    "auction_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "auction_site": {
+          "type": ["null", "string"]
+        },
+        "auction_item_site": {
+          "type": ["null", "boolean"]
+        },
+        "auction_buyer_id": {
+          "type": ["null", "string"]
+        },
+        "auction_closing_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        }
+      }
+    },
+    "incentive_info": {
+      "type": ["null", "object"],
+      "properties": {
+        "transaction_id": {
+          "type": ["null", "string"]
+        },
+        "transaction_updated_date": {
+          "type": ["null", "string"],
+          "format": "date-time"
+        },
+        "incentive_details": {
+          "type": ["null", "array"],
+          "items": {
+            "type": "object",
+            "properties": {
+              "incentive_type": {
+                "type": ["null", "string"]
+              },
+              "incentive_code": {
+                "type": ["null", "string"]
+              },
+              "incentive_amount": {
+                "type": ["null", "object"],
+                "properties": {
+                  "currency_code": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": ["currency_code", "value"]
+              },
+              "incentive_program_code": {
+                "type": ["null", "string"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

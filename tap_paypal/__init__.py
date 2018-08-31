@@ -1,36 +1,24 @@
-#!/usr/bin/env python3
-
-'''A Singer tap for extracting transactions data from the PayPal Sync API.'''
-
 import os
 import json
-import urllib.parse
 from datetime import datetime
-import dateutil.parser
-from dateutil.relativedelta import relativedelta
-import pytz
 import requests
-from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
-from requests_oauthlib import OAuth2Session
+import dateutil
+import pytz
 import singer
-from singer import metrics
-from singer import utils
+from singer import utils, metrics
+from clients import TransactionClient, InvoiceClient
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
+CLIENTS = {
+    'transactions': TransactionClient,
+    'invoices': InvoiceClient}
+EXTRA_ARGS = {
+    'transactions': {'fields': 'all'},
+    'invoices': {}}
+REPLICATION_KEYS = {
+    'transactions': ['transaction_info', 'transaction_updated_date'],
+    'invoices': ['metadata', 'created_date']}
 LOGGER = singer.get_logger()
-BASE_URL = 'https://api.paypal.com'
-ENDPOINTS = {
-    'transactions': 'v1/reporting/transactions',
-    'token': 'v1/oauth2/token'}
-STREAMS = {}
-
-def strip_query_string(url):
-    '''Remove the query string from a URL and return it as a dictionary of params.'''
-    parsed = urllib.parse.urlparse(url)
-    params = urllib.parse.parse_qs(parsed.query)
-    parsed = parsed._replace(query='')
-    url = parsed.geturl()
-    return url, params
 
 def stream_is_selected(metadata):
     '''Checks the metadata and returns if a stream is selected or not.'''
@@ -45,12 +33,6 @@ def load_json(path):
     with open(path, 'r') as file:
         json_ = json.load(file)
     return json_
-
-def load_schema(schema_name):
-    '''Load a single schema in ./schemas by stream name as a dictionary.'''
-    path = os.path.join(get_abs_path('schemas'), schema_name + '.json')
-    schema = load_json(path)
-    return schema
 
 def load_all_schemas():
     '''Load each schema in ./schemas into a dictionary with stream name keys.'''
@@ -68,14 +50,23 @@ def discover():
     '''
     raw_schemas = load_all_schemas()
     entries = []
+    key_properties = {
+        'invoices': 'id',
+        'transactions': 'transaction_id'}
+    bookmark_properties = {
+        'invoices': 'created_date',
+        'transactions': 'transaction_updated_date'}
+    forced_replication_method = {
+        'invoices': 'FULL_TABLE',
+        'transactions': 'INCREMENTAL'
+    }
 
     for schema_name, schema in raw_schemas.items():
         top_level_metadata = {
             'inclusion': 'available',
             'selected': True,
-            'forced-replication-method': 'INCREMENTAL',
-            'valid-replication_keys': ['transaction_updated_date'],
-            'selected-by-default': True}
+            'forced-replication-method': forced_replication_method[schema_name],
+            'valid-replication-keys': bookmark_properties[schema_name]}
 
         metadata = singer.metadata.new()
         for key, val in top_level_metadata.items():
@@ -97,211 +88,12 @@ def discover():
             'tap_stream_id': schema_name,
             'schema': schema,
             'metadata': singer.metadata.to_list(metadata),
-            'key_properties': ['transaction_id'],
-            'bookmark_properties': ['transaction_updated_date']
+            'key_properties': key_properties[schema_name],
+            'bookmark_properties': bookmark_properties[schema_name]
         }
         entries.append(catalog_entry)
 
     return {'streams': entries}
-
-class PayPalClient():
-    '''Authenticates and makes requests to the PayPal Sync API.'''
-
-    def __init__(self, config):
-        self.config = config
-        oath_client = BackendApplicationClient(
-            client_id=self.config['client_id'])
-        self.session = OAuth2Session(client=oath_client)
-        self.get_access_token()
-
-    def get_access_token(self):
-        '''Using stored credentials, gets an access token from the token API.'''
-        url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['token'])
-        self.session.fetch_token(
-            token_url=url,
-            client_id=self.config['client_id'],
-            client_secret=self.config['client_secret'])
-
-    def request(self, url, params):
-        '''Makes a GET request to the API and handles logging for any errors.'''
-        url, addl_params = strip_query_string(url)
-        params.update(addl_params)
-        LOGGER.info("Making a request to '%s' using params: %s", url, params)
-        try:
-            response = self.session.get(url, params=params)
-        except TokenExpiredError:
-            self.get_access_token()
-            response = self.session.get(url, params=params)
-        try:
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as error:
-            message = "Request returned code {} with the following details: {}" \
-                .format(response.status_code, response.json())
-            raise type(error)(message) from error
-        else:
-            return response.json()
-
-class Stream():
-    '''
-    Stores schema data and a buffer of records for a particular stream.
-    When a Stream's buffer reaches its `buffer_size`, it returns a
-    boolean that the buffer should be emptied. Emptying the buffer resets the
-    buffer and writes all records to stdout.
-
-    Also tracks a bookmark for each record written out of the buffer.
-    '''
-    buffer_limit = 100
-
-    def __init__(self, stream, bookmark=None):
-        self.stream = stream
-        self.stream_name = stream.tap_stream_id
-        self.schema = stream.schema.to_dict()
-        self.key_properties = stream.key_properties
-        self.counter = metrics.record_counter(self.stream_name)
-        self.buffer = []
-        self.bookmark = bookmark
-
-    def add_to_buffer(self, record):
-        '''Add a record to the buffer and return True if the buffer is full.'''
-        self.buffer.append(record)
-        return bool(len(self.buffer) >= self.buffer_limit)
-
-    def empty_buffer(self, state):
-        '''Empties the buffer, writing records to stdout and saving state.'''
-        for record in self.buffer:
-            transformed = singer.transform(record, self.schema)
-            singer.write_record(self.stream_name, transformed)
-            self.bookmark = dateutil.parser \
-                .parse(record['transaction_updated_date'])
-            self.counter.increment()
-        self.buffer = []
-        self.save_state(state)
-
-    def save_state(self, state):
-        '''Writes bookmark to state and writes state to stdout.'''
-        state = singer.write_bookmark(
-            state=state,
-            tap_stream_id=self.stream_name,
-            key='transaction_updated_date',
-            val=self.bookmark.isoformat('T'))
-        singer.write_state(state)
-
-    def write_schema(self):
-        '''Writes formatted schema to stdout.'''
-        singer.write_schema(
-            self.stream_name,
-            self.schema,
-            self.key_properties)
-
-class BatchWriter():
-    '''
-    Sorts a batch of transactions by stream, filtering out any transactions
-    that don't meet replication key requirements, and writing the remainder
-    to the appropriate stream.
-    '''
-
-    def __init__(self, batch, state):
-        self.batch = batch
-        self.state = state
-
-    def process(self):
-        '''
-        Sorts transaction data into the appropriate stream buffers, emptying the
-        buffers whenever they become full.
-        '''
-        for transaction in self.batch:
-            updated_date = \
-                transaction['transaction_info']['transaction_updated_date']
-            id_ = transaction['transaction_info']['transaction_id']
-            for stream_name, record in transaction.items():
-                if record:
-                    record['transaction_id'] = id_
-                    record['transaction_updated_date'] = updated_date
-                    self.write_to_stream(stream_name, record)
-
-    def write_to_stream(self, stream_name, record):
-        '''Writes valid record to buffer, emptying buffer if buffer is full.'''
-        updated_date = dateutil.parser.parse(
-            record['transaction_updated_date'])
-        stream = STREAMS[stream_name]
-        if updated_date >= stream.bookmark:
-            buffer_is_full = stream.add_to_buffer(record)
-            if buffer_is_full:
-                stream.empty_buffer(self.state)
-
-def request_and_paginate(client, start_date, end_date, fields='all'):
-    '''
-    Makes a request to the API, retrieving transactions in chunks of 100 and
-    yielding a generator of those 100-record batches. Handles any pagination
-    automatically using the `next` field returned in the response.
-    '''
-    url = urllib.parse.urljoin(BASE_URL, ENDPOINTS['transactions'])
-    params = {
-        'start_date': start_date.isoformat('T'),
-        'end_date': end_date.isoformat('T'),
-        'fields': ','.join(fields) if isinstance(fields, list) else fields}
-
-    LOGGER.info(
-        'Retrieving transactions between %s and %s.',
-        params['start_date'],
-        params['end_date'])
-    while True:
-        response = client.request(url, params=params)
-        LOGGER.info(
-            'Completed retrieving all transactions on page %s of %s.',
-            response['page'],
-            response['total_pages'])
-        batch = response['transaction_details']
-        yield batch
-        try:
-            url = next(
-                link['href'] for link in response['links']
-                if link['rel'] == 'next')
-            params = {}
-        except StopIteration:
-            break
-
-def empty_all_buffers(state):
-    '''Called at end of sync, empties remaining records in stream buffers.'''
-    for stream in STREAMS.values():
-        stream.empty_buffer(state)
-    for stream in STREAMS.values():
-        LOGGER.info(
-            "Completed sync of %s records to stream '%s'.",
-            stream.counter.value,
-            stream.stream_name)
-
-def get_transactions(client, state, start_date, end_date=None, fields='all'):
-    '''
-    Divides the date range into segments no longer than one month
-    and iterates through them to request transaction batches and process them.
-    '''
-    if end_date is None:
-        end_date = datetime.utcnow().replace(microsecond=0, tzinfo=pytz.utc)
-
-    batch_size = relativedelta(months=+1, seconds=-1)
-    while start_date + batch_size < end_date:
-        batch_end_date = start_date + batch_size
-        for batch in request_and_paginate(client, start_date, batch_end_date, fields):
-            BatchWriter(batch, state).process()
-        start_date = batch_end_date + relativedelta(seconds=+1)
-    for batch in request_and_paginate(client, start_date, end_date, fields):
-        BatchWriter(batch, state).process()
-    empty_all_buffers(state)
-
-def build_stream(catalog_stream, state):
-    '''Generates a new stream instance and adds to the global dictionary.'''
-    if state:
-        bookmark = singer.get_bookmark(
-            state=state,
-            tap_stream_id=catalog_stream.tap_stream_id,
-            key='transaction_updated_date')
-        bookmark = dateutil.parser.parse(bookmark)
-    else:
-        # PayPal's oldest data is July 2016
-        bookmark = datetime(2016, 7, 1, tzinfo=pytz.utc)
-    stream = Stream(catalog_stream, bookmark)
-    STREAMS[catalog_stream.tap_stream_id] = stream
 
 def get_selected_streams(catalog):
     '''Using the catalog, returns a list of selected stream names.'''
@@ -312,23 +104,62 @@ def get_selected_streams(catalog):
             selected_stream_names.append(stream.tap_stream_id)
     return selected_stream_names
 
-def sync(config, state, catalog):
-    '''
-    Builds the streams dictionary and API client, gets the oldest bookmark of
-    all of the streams to use for the API call, then kicks off the sync.
-    '''
-    client = PayPalClient(config)
-    selected_stream_names = get_selected_streams(catalog)
-    for catalog_stream in catalog.streams:
-        if catalog_stream.tap_stream_id in selected_stream_names:
-            build_stream(catalog_stream, state)
-            STREAMS[catalog_stream.tap_stream_id].write_schema()
-    oldest_updated_date = min([stream.bookmark for stream in STREAMS.values()])
-    get_transactions(
-        client=client,
+def get_replication_value(record, keys):
+    '''Recursively navigate a record by a list of keys and return a value.'''
+    copied_keys = keys.copy()
+    first_key = copied_keys.pop(0)
+    value = record[first_key]
+    if copied_keys:
+        value = get_replication_value(value, copied_keys)
+        return value
+    else:
+        return value
+
+def write_record(record, state, stream, replication_keys):
+    stream_name = stream.tap_stream_id
+    transformed = singer.transform(record, stream.schema.to_dict())
+    singer.write_record(stream_name, transformed)
+    bookmark = get_replication_value(record, replication_keys)
+    state = singer.write_bookmark(
         state=state,
-        start_date=oldest_updated_date,
-        fields=selected_stream_names)
+        tap_stream_id=stream_name,
+        key=replication_keys[-1],
+        val=bookmark)
+    singer.write_state(state)
+
+def sync(config, state, catalog):
+    selected_stream_names = get_selected_streams(catalog)
+    for stream in catalog.streams:
+        stream_name = stream.tap_stream_id
+        if stream_name in selected_stream_names:
+            replication_keys = REPLICATION_KEYS[stream_name]
+            bookmark = singer.get_bookmark(
+                state=state,
+                tap_stream_id=stream_name,
+                key=replication_keys[-1])
+
+            if bookmark:
+                start_date = dateutil.parser.parse(bookmark, tzinfos={'PDT': -7 * 3600})
+            elif stream_name == 'transactions':
+                start_date = datetime(2016, 7, 1, tzinfo=pytz.utc)
+            elif stream_name == 'invoices':
+                start_date = None
+            else:
+                message = 'No state file or default start date provided for stream %s.'
+                LOGGER.critical(message, stream_name)
+
+            client = CLIENTS[stream_name](config)
+            LOGGER.info("Beginning sync of stream '%s'...", stream_name)
+            singer.write_schema(
+                stream_name,
+                stream.schema.to_dict(),
+                stream.key_properties)
+            records = client.get_records(start_date=start_date, **EXTRA_ARGS[stream_name])
+            with metrics.record_counter(stream_name) as counter:
+                for record in records:
+                    write_record(record, state, stream, replication_keys)
+                    counter.increment()
+            LOGGER.info("Finished syncing stream '%s'.")
 
 @utils.handle_top_exception(LOGGER)
 def main():
