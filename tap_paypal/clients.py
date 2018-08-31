@@ -5,7 +5,6 @@ import urllib.parse
 import pytz
 import dateutil
 from dateutil.relativedelta import relativedelta
-from requests.exceptions import HTTPError
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
 import singer
@@ -46,7 +45,7 @@ class PayPalClient:
             token_url=url,
             client_id=self.config['client_id'],
             client_secret=self.config['client_secret'])
-            
+
     @backoff.on_exception(
         backoff.expo,
         (requests.exceptions.RequestException),
@@ -65,9 +64,9 @@ class PayPalClient:
             response = self.session.get(url, params=params)
         try:
             response.raise_for_status()
-        except HTTPError as error:
+        except requests.exceptions.HTTPError as error:
             message = "Request returned code {} with the following details: {}" \
-                .format(response.status_code, response.json())
+                .format(response.status_code, response.text)
             DynamicExceptionClass = type(error)
             raise DynamicExceptionClass(message) from error
         else:
@@ -111,14 +110,19 @@ class TransactionClient(PayPalClient):
                 fields=fields)
             for batch in batches:
                 for transaction in batch:
+                    transaction['transaction_id'] = transaction['transaction_info'] \
+                        .pop('transaction_id')
                     yield transaction
             start_date = batch_end_date + relativedelta(seconds=+1)
+
         batches = self.paginate(
             start_date=start_date.isoformat('T'),
             end_date=end_date.isoformat('T'),
             fields=fields)
         for batch in batches:
             for transaction in batch:
+                transaction['transaction_id'] = transaction['transaction_info'] \
+                    .pop('transaction_id')
                 yield transaction
 
 class InvoiceClient(PayPalClient):

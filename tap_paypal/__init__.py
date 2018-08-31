@@ -159,7 +159,7 @@ def sync(config, state, catalog):
                 for record in records:
                     write_record(record, state, stream, replication_keys)
                     counter.increment()
-            LOGGER.info("Finished syncing stream '%s'.")
+            LOGGER.info("Finished syncing stream '%s'.", stream_name)
 
 @utils.handle_top_exception(LOGGER)
 def main():
