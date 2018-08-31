@@ -9,6 +9,8 @@ from requests.exceptions import HTTPError
 from oauthlib.oauth2 import BackendApplicationClient, TokenExpiredError
 from requests_oauthlib import OAuth2Session
 import singer
+import requests
+import backoff
 
 LOGGER = singer.get_logger()
 BASE_URL = 'https://api.paypal.com'
@@ -44,7 +46,11 @@ class PayPalClient:
             token_url=url,
             client_id=self.config['client_id'],
             client_secret=self.config['client_secret'])
-
+            
+    @backoff.on_exception(
+        backoff.expo,
+        (requests.exceptions.RequestException),
+        max_tries=5)
     def make_request(self, url, params=None):
         '''Makes a GET request to the API and handles logging for any errors.'''
         if not params:
