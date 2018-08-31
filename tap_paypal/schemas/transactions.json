@@ -40,13 +40,13 @@
     }
   },
   "properties": {
+    "transaction_id": {
+      "type": "string"
+    },
     "transaction_info": {
       "type": ["null", "object"],
       "properties": {
         "paypal_account_id": {
-          "type": ["null", "string"]
-        },
-        "transaction_id": {
           "type": ["null", "string"]
         },
         "paypal_reference_id": {
