@@ -129,11 +129,17 @@ class InvoiceClient(PayPalClient):
         params = kwargs
         params['page'] = 0
         params['page_size'] = 100
+        params['total_count_required'] = True
+
         while True:
             response = self.make_request(url, params=params)
+            total_count = response['total_count']
             batch = response[self.records_key]
             params['page'] += params['page_size']
-            yield batch
+            if params['page'] <= total_count:
+                yield batch
+            else:
+                break
 
     def get_invoice_details(self, invoice_id):
         url = '/'.join([BASE_URL, self.endpoint, invoice_id])
