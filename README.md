@@ -15,6 +15,6 @@ This tap:
   - [store_info](https://developer.paypal.com/docs/api/sync/v1/#definition-store_info)
 
 - Outputs the schema for each resource
-- Incrementally pulls data based on the `transaction_updated_date` of each transaction
+- Pulls data from the Invoicing and PayPal Sync APIs
 
 ---

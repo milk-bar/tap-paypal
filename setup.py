@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 from setuptools import setup
 
+with open('README.md', 'r') as file:
+    long_description = file.read()
+
 setup(
     name="tap-paypal",
     version="0.1.0",
     description="Singer.io tap for extracting data from the PayPal Sync API",
-    author="Josh Temple",
+    author="Milk Bar",
     url="https://github.com/milk-bar/tap-paypal",
     classifiers=["Programming Language :: Python :: 3 :: Only"],
     py_modules=["tap_paypal"],
