@@ -6,7 +6,7 @@ import dateutil
 import pytz
 import singer
 from singer import utils, metrics
-from clients import TransactionClient, InvoiceClient
+from .clients import TransactionClient, InvoiceClient
 
 REQUIRED_CONFIG_KEYS = ['client_id', 'client_secret']
 CLIENTS = {
