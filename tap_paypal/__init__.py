@@ -139,14 +139,20 @@ def sync(config, state, catalog):
                 key=replication_keys[-1])
 
             if bookmark:
-                start_date = dateutil.parser.parse(bookmark, tzinfos={'PDT': -7 * 3600})
-            elif stream_name == 'transactions':
-                start_date = datetime(2016, 7, 1, tzinfo=pytz.utc)
-            elif stream_name == 'invoices':
-                start_date = None
+                if stream_name == 'invoices':
+                    tzinfos = {'PST': -8 * 3600, 'PDT': -7 * 3600}
+                    start_date = dateutil.parser.parse(bookmark, tzinfos=tzinfos) + \
+                        dateutil.relativedelta.relativedelta(years=-1)
+                else:
+                    start_date = dateutil.parser.parse(bookmark)
             else:
-                message = 'No state file or default start date provided for stream %s.'
-                LOGGER.critical(message, stream_name)
+                if stream_name == 'transactions':
+                    start_date = datetime(2016, 7, 1, tzinfo=pytz.utc)
+                elif stream_name == 'invoices':
+                    start_date = None
+                else:
+                    message = 'No state file or default start date provided for stream %s.'
+                    LOGGER.critical(message, stream_name)
 
             client = CLIENTS[stream_name](config)
             LOGGER.info("Beginning sync of stream '%s'...", stream_name)
