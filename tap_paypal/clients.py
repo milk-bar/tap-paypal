@@ -161,7 +161,7 @@ class InvoiceClient(PayPalClient):
         return response
 
     def get_records(self, start_date=None):
-        LOGGER.info('Grabbing records until %s', start_date)
+        LOGGER.info('Obtaining all invoice records until %s', start_date)
         for batch in self.paginate():
             for invoice in batch:
                 record = self.get_invoice_details(invoice['id'])

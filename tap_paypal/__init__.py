@@ -5,6 +5,7 @@ import requests
 import dateutil
 import pytz
 import singer
+import singer.metadata
 from singer import utils, metrics
 from .clients import TransactionClient, InvoiceClient
 
